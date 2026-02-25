@@ -1,0 +1,37 @@
+# ZoteroRAG - MCP Server for Zotero
+# Usage: docker-compose up -d
+
+services:
+  zoterorag:
+    build: .
+    ports:
+      - "23120:23120"  # MCP server port
+    volumes:
+      - ./data:/app/data  # Persist PDFs and vector store
+    environment:
+      - ZOTERO_API_URL=http://host.docker.internal:23119  # Zotero local API
+      - ZOTERO_DATA_DIR=/app/data/pdfs
+      - VECTOR_STORE_DIR=/app/data/vector_store
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434  # Ollama for embeddings/reranking
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+# Optional: Ollama service for embeddings and reranking
+# Uncomment if you want to run Ollama in Docker
+#
+# ollama:
+#   image: ollama/ollama:latest
+#   ports:
+#     - "11434:11434"
+#   volumes:
+#     - ollama_data:/root/.ollama
+#   restart: unless-stopped
+
+volumes:
+  # Named volume for persistent data (PDFs and vector store)
+  zotero_data:
+
+# Uncomment if using Ollama in Docker
+# volumes:
+#   ollama_data:
