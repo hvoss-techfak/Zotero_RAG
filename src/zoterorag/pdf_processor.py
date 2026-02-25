@@ -339,17 +339,34 @@ class PDFProcessor:
 
         return sections
 
-    def create_sentence_windows(self, section: Section, window_size: int = 3) -> List[SentenceWindow]:
+    def create_sentence_windows(
+        self, 
+        section: Section, 
+        window_size: int = 3,
+        overlap: int = 2
+    ) -> List[SentenceWindow]:
         """Create sliding windows of sentences from section text.
         
-        Returns list of SentenceWindow objects.
+        Creates overlapping windows where each subsequent window shares
+        (window_size - overlap) sentences with the previous one.
+        
+        Args:
+            section: The section to create windows from
+            window_size: Number of sentences per window (default 3)
+            overlap: Number of sentences that overlap between windows (default 2,
+                     meaning windows slide by 1 sentence each time for maximum overlap)
+        
+        Returns:
+            List of SentenceWindow objects with overlapping content.
         """
         # Split into sentences using common delimiters
         sentence_list = re.split(r"(?<=[.!?])\s+", section.text)
         sentence_list = [s.strip() for s in sentence_list if s.strip()]
         
         windows: List[SentenceWindow] = []
-        for i in range(len(sentence_list) - window_size + 1):
+        step = max(1, window_size - overlap)  # How many sentences to advance
+        
+        for i in range(0, len(sentence_list) - window_size + 1, step):
             window_sentences = sentence_list[i:i + window_size]
             window_text = " ".join(window_sentences)
             
@@ -365,7 +382,7 @@ class PDFProcessor:
                 is_embedded=False
             ))
         
-        # If fewer sentences than window_size, still create one window with all text
+        # Handle case where we have some sentences but less than full window_size
         if not windows and sentence_list:
             windows.append(SentenceWindow(
                 id=f"{section.id}_win_0",

@@ -130,21 +130,39 @@ class SearchEngine:
 
         return results
 
-    def _create_sentence_windows_on_demand(self, section_text: str, section_id: str) -> List[SentenceWindow]:
-        """Create sliding window of 3 sentences from section text on-demand.
+    def _create_sentence_windows_on_demand(
+        self, 
+        section_text: str, 
+        section_id: str,
+        window_size: int = 3,
+        overlap: int = 2
+    ) -> List[SentenceWindow]:
+        """Create sliding window of overlapping sentences from section text on-demand.
         
-        This is used when sentence windows haven't been pre-embedded.
+        Creates windows where each subsequent window shares (window_size - overlap)
+        sentences with the previous one. This is used when sentence windows haven't 
+        been pre-embedded.
+        
+        Args:
+            section_text: The text content of the section
+            section_id: The ID of the section
+            window_size: Number of sentences per window (default 3)
+            overlap: Number of overlapping sentences between windows (default 2,
+                     meaning windows slide by 1 sentence each time for maximum overlap)
+        
+        Returns:
+            List of SentenceWindow objects with overlapping content.
         """
         import re
         # Split into sentences using common delimiters
         sentence_list = re.split(r"(?<=[.!?])\s+", section_text)
         sentence_list = [s.strip() for s in sentence_list if s.strip()]
         
-        window_size = 3
         windows: List[SentenceWindow] = []
+        step = max(1, window_size - overlap)  # How many sentences to advance
         
-        # Create sliding windows of 3 consecutive sentences
-        for i in range(len(sentence_list) - window_size + 1):
+        # Create sliding overlapping windows of sentences
+        for i in range(0, len(sentence_list) - window_size + 1, step):
             window_sentences = sentence_list[i:i + window_size]
             window_text = " ".join(window_sentences)
             
@@ -159,7 +177,7 @@ class SearchEngine:
                 is_embedded=False
             ))
         
-        # If fewer than 3 sentences, create one window with all available text
+        # Handle case where we have some sentences but less than full window_size
         if not windows and sentence_list:
             windows.append(SentenceWindow(
                 id=f"{section_id}_win_0",
@@ -185,7 +203,7 @@ class SearchEngine:
         This enables two-stage search even when sentences weren't pre-embedded.
         Returns tuples of (window_text, score) instead of just window_id.
         """
-        # Create sliding window of 3 sentences from section text
+        # Create sliding overlapping window of 3 sentences from section text
         windows = self._create_sentence_windows_on_demand(section_text, section_id)
         
         if not windows:
