@@ -48,18 +48,15 @@ class TestOllamaConnection:
         mock_ollama.embeddings.assert_called_once()
 
     @patch("zoterorag.embedding_manager.ollama")
-    def test_embed_batch(self, mock_ollama):
-        """Test batch embedding."""
+    def test_embed_batch_single_format(self, mock_ollama):
+        """Test batch embedding with single embedding response format."""
         from zoterorag.embedding_manager import EmbeddingManager
         
-        # Mock ollama.embeddings to return different embeddings
+        # Mock ollama.embeddings to return embeddings in "embeddings" key (batch format)
         mock_embedding1 = [0.1] * 384
         mock_embedding2 = [0.2] * 384
         
-        mock_ollama.embeddings.side_effect = [
-            {"embedding": mock_embedding1},
-            {"embedding": mock_embedding2}
-        ]
+        mock_ollama.embeddings.return_value = {"embeddings": [mock_embedding1, mock_embedding2]}
         
         config = Config()
         manager = EmbeddingManager(config)
@@ -69,6 +66,58 @@ class TestOllamaConnection:
         assert len(result) == 2
         assert result[0] == mock_embedding1
         assert result[1] == mock_embedding2
+
+    @patch("zoterorag.embedding_manager.ollama")
+    def test_embed_batch_with_chunking(self, mock_ollama):
+        """Test batch embedding with chunking for large batches."""
+        from zoterorag.embedding_manager import EmbeddingManager
+        
+        # Create 10 embeddings (more than default batch size of 32)
+        mock_embeddings = [[float(i)] * 384 for i in range(10)]
+        
+        # Return all at once in batch format
+        mock_ollama.embeddings.return_value = {"embeddings": mock_embeddings}
+        
+        config = Config()
+        manager = EmbeddingManager(config)
+        
+        texts = [f"text{i}" for i in range(10)]
+        result = manager.embed_batch(texts)
+        
+        assert len(result) == 10
+
+    @patch("zoterorag.embedding_manager.ollama")
+    def test_embed_batch_fallback_on_error(self, mock_ollama):
+        """Test batch embedding falls back to individual calls on error."""
+        from zoterorag.embedding_manager import EmbeddingManager
+        
+        # First call raises, subsequent calls succeed
+        mock_embedding = [0.1] * 384
+        mock_ollama.embeddings.side_effect = [
+            Exception("Batch failed"),  # First batch fails
+            {"embedding": mock_embedding},  # Fallback to single
+            {"embedding": mock_embedding},
+        ]
+        
+        config = Config()
+        manager = EmbeddingManager(config)
+        
+        result = manager.embed_batch(["text1", "text2"])
+        
+        # Should have fallen back and returned results
+        assert len(result) == 2
+
+    @patch("zoterorag.embedding_manager.ollama")
+    def test_embed_batch_empty_input(self, mock_ollama):
+        """Test batch embedding handles empty input."""
+        from zoterorag.embedding_manager import EmbeddingManager
+        
+        config = Config()
+        manager = EmbeddingManager(config)
+        
+        result = manager.embed_batch([])
+        
+        assert result == []
 
     @patch("zoterorag.embedding_manager.ollama")
     def test_embed_text_failure(self, mock_ollama):

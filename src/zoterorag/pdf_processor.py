@@ -61,127 +61,6 @@ class PDFProcessor:
             print(f"Error extracting from {pdf_path}: {e}")
             return ""
 
-    def segment_into_sections(self, markdown: str, document_id: str) -> List[Section]:
-        """Segment markdown text into sections based on headings."""
-        lines = markdown.split("\n")
-        sections: List[Section] = []
-        
-        current_section_text = ""
-        current_title = "Introduction"
-        current_level = 1
-        section_index = 0
-        
-        for line in lines:
-            heading_match = self.HEADING_PATTERN.match(line)
-            if heading_match:
-                # Save previous section if non-empty
-                if current_section_text.strip():
-                    sections.append(Section(
-                        id=f"{document_id}_sec_{section_index}",
-                        document_id=document_id,
-                        title=current_title,
-                        level=current_level,
-                        start_page=1,
-                        end_page=1,
-                        text=current_section_text.strip(),
-                    ))
-                    section_index += 1
-
-                # Start new section
-                hashes, title = heading_match.groups()
-                current_title = title.strip()
-                current_level = len(hashes)
-                current_section_text = ""
-            else:
-                current_section_text += " " + line
-
-        # Add final section if there's remaining text
-        if current_section_text.strip():
-            sections.append(Section(
-                id=f"{document_id}_sec_{section_index}",
-                document_id=document_id,
-                title=current_title,
-                level=current_level,
-                start_page=1,
-                end_page=1,
-                text=current_section_text.strip(),
-            ))
-
-        return sections
-
-    def extract_sections(self, pdf_path: Path) -> list[Section]:
-        """Extract sections from a PDF file based on headings."""
-        if not pdf_path.exists():
-            return []
-
-        # Use pymupdf4llm to extract markdown
-        try:
-            md_text = pymupdf4llm.to_markdown(
-                str(pdf_path),
-                page_chunks=True,  # Get page-level chunks for page tracking
-            )
-        except Exception as e:
-            print(f"Error extracting from {pdf_path}: {e}")
-            return []
-
-        sections = []
-        current_section_text = ""
-        current_title = "Introduction"
-        current_level = 1
-        start_page = 1
-        
-        # Track which page we're on
-        current_page = 1
-
-        if isinstance(md_text, list):
-            # Page chunks mode - process each chunk
-            for i, chunk in enumerate(md_text):
-                text = chunk.get("text", "")
-                page = chunk.get("page", i + 1)
-                
-                # Find headings in this chunk
-                sections_from_chunk = self._find_headings_in_text(
-                    text, current_section_text, current_title, current_level,
-                    start_page, page, len(sections), pdf_path.stem
-                )
-                
-                for sec in sections_from_chunk:
-                    if sec.text.strip():  # Only add non-empty sections
-                        sections.append(sec)
-                    
-                    # Update current tracking
-                    current_section_text = ""
-                    current_title = sec.title
-                    current_level = sec.level
-                    start_page = page + 1
-
-                # Accumulate non-heading text as part of current section
-                non_heading = self._remove_headings(text)
-                if non_heading.strip():
-                    current_section_text += " " + non_heading
-        else:
-            # Single string mode - find headings in full text
-            sections_from_text = self._find_headings_in_text(
-                md_text, "", "Introduction", 1, 1, 1, len(sections), pdf_path.stem
-            )
-            for sec in sections_from_text:
-                if sec.text.strip():
-                    sections.append(sec)
-
-        # Add final section if there's remaining text
-        if current_section_text.strip():
-            sections.append(Section(
-                id=f"{pdf_path.stem}_{len(sections)}",
-                document_id=pdf_path.stem,
-                title=current_title,
-                level=current_level,
-                start_page=start_page,
-                end_page=current_page,
-                text=current_section_text.strip(),
-            ))
-
-        return sections
-
     def _find_headings_in_text(
         self, 
         text: str, 
@@ -397,7 +276,10 @@ class PDFProcessor:
 
 
 def process_document(document: Document) -> List[Section]:
-    """Process a document to extract its sections."""
+    """Process a document to extract its sections.
+    
+    Uses line-count based splitting (extract_quarter_sections) for more
+    granular embeddings rather than heading-based sectioning.
+    """
     processor = PDFProcessor()
-    markdown = processor.extract_markdown(str(document.pdf_path))
-    return processor.segment_into_sections(markdown, document.zotero_key)
+    return processor.extract_quarter_sections(str(document.pdf_path))

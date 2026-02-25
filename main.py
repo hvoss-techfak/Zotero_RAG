@@ -25,9 +25,11 @@ from unittest.mock import patch
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
+import asyncio
+
 from zoterorag.config import Config
 from zoterorag.embedding_manager import EmbeddingManager
-from zoterorag.mcp_server import MCPZoteroServer
+from zoterorag.mcp_server import MCPZoteroServer, set_server_instance, mcp
 from zoterorag.search_engine import SearchEngine
 from zoterorag.vector_store import VectorStore
 from zoterorag.zotero_client import ZoteroClient
@@ -57,15 +59,17 @@ class ZoteroRAGApplication:
         # Ensure directories exist
         Config.ensure_dirs()
 
-        # Initialize components
+        # Initialize components - let MCPZoteroServer handle initialization properly
         try:
             zotero_client = ZoteroClient(api_url=self.config.ZOTERO_API_URL)
-            vector_store = VectorStore(str(self.config.VECTOR_STORE_DIR))
-            embedding_manager = EmbeddingManager(self.config)
-            search_engine = SearchEngine(self.config)
-
+            
+            # Create and register server instance for global access
+            # This handles proper EmbeddingManager initialization with executor
             self.server = MCPZoteroServer(self.config)
-            self.embedding_manager = embedding_manager
+            set_server_instance(self.server)  # Register for FastMCP tool functions
+            
+            # Reference the embedding_manager from the server (already properly initialized)
+            self.embedding_manager = self.server.embedding_manager
 
             logger.info("All services initialized successfully")
             return True
@@ -76,11 +80,11 @@ class ZoteroRAGApplication:
 
     def run_mcp_server(self):
         """Run the MCP server (blocking)."""
+        # Initialize if not already done
         if not self.server:
             if not self.initialize():
                 sys.exit(1)
 
-        # Test connections before starting
         logger.info("Testing service connections...")
         
         zotero_ok = self.test_zotero_connection()
@@ -93,24 +97,13 @@ class ZoteroRAGApplication:
             logger.error("Ollama connection required for embeddings")
             sys.exit(1)
 
-        # Keep server running
-        logger.info(f"MCP server starting on port 23120...")
+        # Run the MCP server (this is blocking)
+        logger.info(f"MCP server starting with stdio transport...")
         
         try:
-            import asyncio
-            
-            # Trigger auto-embedding in background (non-blocking)
-            if self.server and hasattr(self.server, 'start_auto_embedding'):
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(self.server.start_auto_embedding())
-                    loop.close()
-                except Exception as e:
-                    logger.warning(f"Auto-embedding failed (non-blocking): {e}")
-            
-            while self._running:
-                time.sleep(1)
+            # Use mcp.run() directly - it handles its own event loop
+            import anyio
+            anyio.run(mcp.run_stdio_async)
         except KeyboardInterrupt:
             pass
         finally:
@@ -126,11 +119,11 @@ class ZoteroRAGApplication:
         
         while self._running:
             try:
-                # Check for new documents
-                import asyncio
+                from zoterorag.mcp_server import get_server
+                server = get_server()
                 
                 async def check_sync():
-                    result = await self.server.sync_and_embed()
+                    result = await server.sync_and_embed(embed_sentences=False)
                     logger.info(f"Sync status: {result}")
                     
                 asyncio.run(check_sync())
@@ -266,14 +259,18 @@ def main():
         else:
             print("✗ Zotero API connection failed")
             sys.exit(1)
-
-    # Initialize
+    
+    # Start running
     app._running = True
     
-    if args.daemon:
-        app.run_daemon()
-    else:
-        app.run_mcp_server()
+    try:
+        if args.daemon:
+            app.run_daemon()
+        else:
+            app.run_mcp_server()
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
+        app.shutdown()
 
 
 if __name__ == "__main__":

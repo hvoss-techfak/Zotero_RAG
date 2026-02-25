@@ -1004,8 +1004,6 @@ class ZoteroClient:
         Returns:
             Dictionary with bibtex, file_path, title, authors, date, item_type
         """
-        print(f"[DEBUG zotero_client] get_item_metadata called with item_key: {item_key}")
-        
         # Track visited items to prevent infinite loops
         visited_keys = set()
         current_key = item_key
@@ -1013,25 +1011,21 @@ class ZoteroClient:
         
         while len(visited_keys) < max_depth:
             if current_key in visited_keys:
-                print(f"[DEBUG zotero_client] Already visited {current_key}, stopping to avoid loop")
+                logger.debug(f"Already visited {current_key}, stopping to avoid loop")
                 break
             
             visited_keys.add(current_key)
             
             try:
                 url = f"{self.api_url}/api/users/0/items/{current_key}"
-                print(f"[DEBUG zotero_client] Requesting URL: {url}")
                 
                 response = self.session.get(url)
-                print(f"[DEBUG zotero_client] Response status code: {response.status_code}")
                 
                 if response.status_code != 200:
-                    print(f"[DEBUG zotero_client] Non-200 status, returning None. Response text: {response.text[:500] if response.text else 'empty'}")
                     return None
                 
                 item = response.json()
                 data = item.get("data", {})
-                print(f"[DEBUG zotero_client] Item type: {data.get('itemType', 'unknown')}, has parentItem: {'parentItem' in data}")
                 
                 # Check if this item has meaningful metadata (authors or date)
                 authors = [a.get("firstName", "") + " " + a.get("lastName", "").strip() 
@@ -1042,19 +1036,15 @@ class ZoteroClient:
                 item_type = data.get("itemType", "")
                 has_metadata = bool(authors or date or title)
                 is_attachment = (item_type == "attachment")
-                print(f"[DEBUG zotero_client] Current item has metadata: authors={len(authors)}, date='{date}', title='{title[:50]}...', is_attachment={is_attachment}")
                 
                 # If this item has full metadata and is NOT an attachment, use it
                 # For attachments (PDF files), always traverse to parent as they don't have complete bibliographic data
                 if has_metadata and not is_attachment:
-                    print(f"[DEBUG zotero_client] Found item with metadata at key {current_key}")
-                    
                     # Get file path - use original requested key for PDF
                     file_path = ""
                     pdf_key = self._find_pdf_key(data)
                     if not pdf_key:
                         pdf_key = item_key  # Use the originally requested key
-                    print(f"[DEBUG zotero_client] Using PDF key: {pdf_key}")
                     
                     if pdf_key:
                         file_path = f"{self.api_url}/api/users/0/items/{pdf_key}/file"
@@ -1070,12 +1060,9 @@ class ZoteroClient:
                 
                 # No metadata found, check if there's a parent to traverse
                 parent_key = data.get("parentItem")
-                print(f"[DEBUG zotero_client] No metadata, checking for parent: {parent_key}")
                 
                 if not parent_key:
                     # No parent and no metadata - return what we have
-                    print(f"[DEBUG zotero_client] No parent item and no metadata, returning basic info")
-                    
                     file_path = ""
                     pdf_key = self._find_pdf_key(data)
                     if pdf_key:
@@ -1091,20 +1078,15 @@ class ZoteroClient:
                     }
                 
                 # Continue to parent item
-                print(f"[DEBUG zotero_client] Traversing to parent: {parent_key}")
                 current_key = parent_key
                 
             except requests.RequestException as e:
-                print(f"[DEBUG zotero_client] RequestException: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.warning(f"Request error while fetching metadata: {e}")
                 return None
             except Exception as e:
-                print(f"[DEBUG zotero_client] Unexpected exception: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.warning(f"Unexpected error while fetching metadata: {e}")
                 return None
         
         # Exhausted depth limit
-        print(f"[DEBUG zotero_client] Reached max depth {max_depth} without finding metadata")
+        logger.debug(f"Reached max depth {max_depth} without finding metadata")
         return None

@@ -10,7 +10,8 @@ dependencies = [
     "ollama>=0.1.41",
     "numpy>=1.24",
     "tenacity>=8.0",
-    "pymupdf-layout"
+    "pymupdf-layout",
+    "mcp>=1.26.0",
 ]
 
 [project.optional-dependencies]

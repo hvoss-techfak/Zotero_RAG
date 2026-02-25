@@ -713,26 +713,50 @@ class TestSearchEngine:
 
 
 class TestMCPResponses:
-    """Test MCP response helpers."""
+    """Test MCP server with FastMCP framework."""
 
-    def test_create_mcp_response(self):
-        from zoterorag.mcp_server import create_mcp_response
+    def test_mcp_server_has_tools(self):
+        from zoterorag.mcp_server import mcp
         
-        result = {"status": "ok", "data": [1, 2, 3]}
-        response = create_mcp_response("test_tool", result)
+        # Check that FastMCP has registered tools
+        assert hasattr(mcp, '_tool_manager')
         
-        assert response["jsonrpc"] == "2.0"
-        assert response["result"]["tool"] == "test_tool"
-        assert response["result"]["output"] == result
+        # Get the tool names
+        tool_names = list(mcp._tool_manager._tools.keys())
+        
+        # Should have 7 tools registered
+        expected_tools = [
+            "search_documents",
+            "get_library_items", 
+            "get_documents_with_pdfs",
+            "sync_and_embed",
+            "get_embedding_status",
+            "delete_document",
+            "reembed_document"
+        ]
+        
+        for tool in expected_tools:
+            assert tool in tool_names, f"Tool {tool} not registered"
 
-    def test_create_mcp_error(self):
-        from zoterorag.mcp_server import create_mcp_error
+    def test_mcp_server_initialization(self):
+        from zoterorag.mcp_server import MCPZoteroServer, set_server_instance
+        from zoterorag.config import Config
         
-        error = create_mcp_error(-32600, "Invalid Request")
+        # Test that we can initialize the server
+        config = Config()
+        server = MCPZoteroServer(config)
         
-        assert error["jsonrpc"] == "2.0"
-        assert error["error"]["code"] == -32600
-        assert error["error"]["message"] == "Invalid Request"
+        # Verify components are created
+        assert server.zotero_client is not None
+        assert server.embedding_manager is not None
+        assert server.search_engine is not None
+        
+        # Register for global access
+        set_server_instance(server)
+        
+        from zoterorag.mcp_server import get_server
+        retrieved = get_server()
+        assert retrieved is server
 
 
 class TestEdgeCases:

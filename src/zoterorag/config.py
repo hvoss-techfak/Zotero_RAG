@@ -19,7 +19,7 @@ class Config:
     
     # Embedding dimensions: 0 means auto-detect from Ollama model
     # Set explicitly if your model produces non-standard dimensions
-    EMBEDDING_DIMENSIONS: int = int(os.getenv("EMBEDDING_DIMENSIONS", "0"))
+    EMBEDDING_DIMENSIONS: int = int(os.getenv("EMBEDDING_DIMENSIONS", "512"))
 
     # Search parameters
     DEFAULT_TOP_X: int = 10  # Sections to retrieve in stage 1
@@ -34,6 +34,9 @@ class Config:
 
     # Threading for embedding
     MAX_EMBEDDING_WORKERS: int = int(os.getenv("MAX_EMBEDDING_WORKERS", "4"))
+
+    # Batch embedding settings
+    BATCH_EMBEDDING_SIZE: int = int(os.getenv("BATCH_EMBEDDING_SIZE", "32"))  # Number of texts to embed in one batch call
 
     # PDF processing options
     PAGE_SPLITS: int = int(os.getenv("PAGE_SPLITS", "4"))  # Number of sections to split each page into

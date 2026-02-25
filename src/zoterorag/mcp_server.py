@@ -1,9 +1,14 @@
-"""MCP server for ZoteroRAG."""
+"""MCP server for ZoteroRAG using FastMCP.
 
-import json
+This module implements an MCP (Model Context Protocol) server that exposes
+Zotero RAG functionality as tools that can be called by LLM clients.
+Uses the FastMCP framework for simpler implementation.
+"""
+
 import logging
-from pathlib import Path
 from typing import Any, Optional
+
+from mcp.server.fastmcp import FastMCP, Context
 
 from .config import Config
 from .zotero_client import ZoteroClient
@@ -13,59 +18,53 @@ from .search_engine import SearchEngine
 
 logger = logging.getLogger(__name__)
 
+# Create FastMCP instance with proper capabilities
+mcp = FastMCP(
+    "zoterorag",
+    instructions="MCP server for RAG search in Zotero library using Ollama",
+    json_response=True,
+)
+
 
 class MCPZoteroServer:
-    """MCP server exposing Zotero RAG tools."""
+    """MCP server exposing Zotero RAG tools.
+    
+    This class wraps the FastMCP-decorated functions and provides
+    business logic integration.
+    """
 
     def __init__(self, config: Config):
         self.config = config
         self.zotero_client = ZoteroClient(api_url=config.ZOTERO_API_URL)
-        self.embedding_manager = EmbeddingManager(config)
+        # Pass zotero_client to EmbeddingManager for on-demand PDF fetching
+        self.embedding_manager = EmbeddingManager(config, zotero_client=self.zotero_client)
         self.search_engine = SearchEngine(config)
+
         # Cache for document metadata to avoid repeated API calls
         self._metadata_cache: dict[str, dict] = {}
-        self._auto_embed_done = False
-
-    async def start_auto_embedding(self):
-        """Auto-start background embedding on server startup."""
-        if self._auto_embed_done:
-            return
         
-        try:
-            import asyncio
-            result = await self.sync_and_embed()
-            
-            # Log the status but don't block startup
-            if result.get("status") == "started":
-                logger.info(f"Auto-embedding started: {result.get('pending_count')} documents pending")
-            elif result.get("status") == "up_to_date":
-                logger.info("All documents already embedded")
-            else:
-                logger.info(f"Sync status: {result.get('status')}")
-        except Exception as e:
-            logger.warning(f"Auto-embedding failed (non-blocking): {e}")
+        # Force initialization of the ThreadPoolExecutor by accessing it once
+        # This ensures it's ready when we need it for background embedding
+        _ = self.embedding_manager.executor
+        logger.info("[MCPZoteroServer] EmbeddingManager executor initialized")
         
-        self._auto_embed_done = True
+    def shutdown(self):
+        """Shutdown the server."""
+        self.embedding_manager.shutdown()
 
     def _get_metadata_for_key(self, item_key: str) -> dict:
         """Get cached or fresh metadata for an item."""
-        print(f"[DEBUG] _get_metadata_for_key called with key: {item_key}")
-        
         if item_key in self._metadata_cache:
-            print(f"[DEBUG] Found metadata in cache for key: {item_key}")
             return self._metadata_cache[item_key]
-        
+
         # Try to get from Zotero
-        print(f"[DEBUG] Calling zotero_client.get_item_metadata({item_key})")
         metadata = self.zotero_client.get_item_metadata(item_key)
-        print(f"[DEBUG] Got metadata result: {metadata}")
-        
+
         if metadata:
             self._metadata_cache[item_key] = metadata
             return metadata
-        
+
         # Return empty metadata structure
-        print(f"[DEBUG] No metadata found, returning empty structure for key: {item_key}")
         return {
             "bibtex": "",
             "file_path": "",
@@ -75,294 +74,342 @@ class MCPZoteroServer:
             "item_type": ""
         }
 
-    # --- MCP Tool Implementations ---
 
-    async def search_documents(
-        self,
-        query: str,
-        document_key: Optional[str] = None,
-        top_sections: int = 5,
-        top_sentences_per_section: int = 3
-    ) -> list[dict]:
-        """Search across embedded documents using two-stage RAG.
+# Global server instance for business logic
+_server_instance: Optional[MCPZoteroServer] = None
+
+
+def set_server_instance(server: MCPZoteroServer):
+    """Set the global server instance for use in tool functions."""
+    global _server_instance
+    _server_instance = server
+
+
+def get_server() -> MCPZoteroServer:
+    """Get the current server instance."""
+    return _server_instance
+
+
+# =============================================================================
+# FastMCP Tool Implementations
+# =============================================================================
+
+@mcp.tool()
+async def search_documents(
+    query: str,
+    document_key: Optional[str] = None,
+    top_sections: int = 5,
+    top_sentences_per_section: int = 3,
+) -> list[dict]:
+    """Search across embedded documents using two-stage RAG.
+    
+    Returns enriched results including BibTeX and file metadata.
+    
+    Args:
+        query: The search query string
+        document_key: Optional filter to a specific Zotero document key
+        top_sections: Number of top sections to return (default: 5)
+        top_sentences_per_section: Number of sentences per section (default: 3)
+    """
+    server = get_server()
+    if not server:
+        return [{"error": "Server not initialized"}]
+    
+    results = server.search_engine.search(
+        query=query,
+        document_key=document_key,
+        top_sections=top_sections,
+        top_sentences_per_section=top_sentences_per_section
+    )
+
+    # First pass: collect all unique keys and fetch metadata for each once
+    key_to_metadata: dict[str, dict] = {}
+
+    for r in results:
+        zotero_key = r.zotero_key
+
+        if zotero_key and zotero_key not in key_to_metadata:
+            # Fetch Zotero metadata (only once per unique document)
+            meta = server._get_metadata_for_key(zotero_key)
+
+            # If no Zotero title, fall back to vector store title
+            if not meta.get("title"):
+                vs_title = server.search_engine.vector_store.get_document_title(zotero_key)
+                if vs_title:
+                    meta["title"] = vs_title
+
+            key_to_metadata[zotero_key] = meta
+
+    # Second pass: apply metadata to all results
+    enriched_results = []
+
+    for r in results:
+        result_dict = r.to_dict()
+
+        zotero_key = r.zotero_key
+
+        if zotero_key and zotero_key in key_to_metadata:
+            meta = key_to_metadata[zotero_key]
+
+            # Apply all enriched data to this result
+            result_dict["bibtex"] = meta.get("bibtex", "")
+            result_dict["file_path"] = meta.get("file_path", "")
+            result_dict["authors"] = meta.get("authors", [])
+            result_dict["date"] = meta.get("date", "")
+            result_dict["item_type"] = meta.get("item_type", "")
+
+            # Set document_title - prefer Zotero title, fallback to vector store
+            doc_title = meta.get("title", "")
+            if not doc_title:
+                vs_title = server.search_engine.vector_store.get_document_title(zotero_key)
+                if vs_title:
+                    doc_title = vs_title
+            result_dict["document_title"] = doc_title
+
+        # If we still don't have a document title, use section info as fallback
+        if not result_dict.get("document_title") and result_dict.get("section_title"):
+            result_dict["document_title"] = f"Document containing: {result_dict['section_title'][:50]}"
+
+        enriched_results.append(result_dict)
+
+    return enriched_results
+
+
+@mcp.tool()
+async def get_library_items(limit: int = 25) -> list[dict]:
+    """Get items from Zotero library with their metadata.
+    
+    Args:
+        limit: Maximum number of items to return (default: 25)
+    """
+    server = get_server()
+    if not server:
+        return [{"error": "Server not initialized"}]
         
-        Returns enriched results including BibTeX and file metadata.
-        """
-        print(f"[DEBUG] search_documents called with query: {query}")
+    items = server.zotero_client.get_items(limit=limit)
+    return [
+        {
+            "key": item.get("key", ""),
+            "title": item.get("data", {}).get("title", ""),
+            "authors": [a.get("firstName", "") + " " + a.get("lastName", "")
+                       for a in item.get("data", {}).get("creators", [])],
+            "date": item.get("data", {}).get("date", ""),
+        }
+        for item in items
+    ]
+
+
+@mcp.tool()
+async def get_documents_with_pdfs() -> list[dict]:
+    """Get all documents that have PDFs attached in Zotero."""
+    server = get_server()
+    if not server:
+        return [{"error": "Server not initialized"}]
         
-        results = self.search_engine.search(
-            query=query,
-            document_key=document_key,
-            top_sections=top_sections,
-            top_sentences_per_section=top_sentences_per_section
-        )
+    docs = server.zotero_client.get_documents_with_pdfs()
+    return [
+        {
+            "key": doc.zotero_key,
+            "title": doc.title,
+            "authors": doc.authors,
+            "has_pdf": bool(doc.pdf_path),
+        }
+        for doc in docs
+    ]
+
+
+@mcp.tool()
+async def sync_and_embed(embed_sentences: bool = False, document_key: Optional[str] = None) -> dict:
+    """Sync from Zotero and embed new documents.
+    
+    Uses on-demand PDF fetching - PDFs are fetched temporarily for embedding
+    and not saved to disk permanently.
+    
+    Args:
+        embed_sentences: Whether to embed sentences (default: false)
+        document_key: Optional specific document key to sync
+    """
+    server = get_server()
+    if not server:
+        return {"status": "error", "message": "Server not initialized"}
         
-        print(f"[DEBUG] Got {len(results)} search results")
-        
-        # First pass: collect all unique keys and fetch metadata for each once
-        # This ensures we call Zotero API at most once per unique document
-        key_to_metadata: dict[str, dict] = {}
-        
-        for r in results:
-            zotero_key = r.zotero_key
-            print(f"[DEBUG] Processing result with zotero_key: {zotero_key}")
-            
-            if zotero_key and zotero_key not in key_to_metadata:
-                # Fetch Zotero metadata (only once per unique document)
-                meta = self._get_metadata_for_key(zotero_key)
-                
-                # If no Zotero title, fall back to vector store title
-                if not meta.get("title"):
-                    vs_title = self.search_engine.vector_store.get_document_title(zotero_key)
-                    if vs_title:
-                        meta["title"] = vs_title
-                
-                key_to_metadata[zotero_key] = meta
-        
-        # Second pass: apply metadata to ALL results (not just the first one per key)
-        enriched_results = []
-        
-        for r in results:
-            result_dict = r.to_dict()
-            
-            zotero_key = r.zotero_key
-            
-            if zotero_key and zotero_key in key_to_metadata:
-                meta = key_to_metadata[zotero_key]
-                
-                # Apply all enriched data to this result
-                result_dict["bibtex"] = meta.get("bibtex", "")
-                result_dict["file_path"] = meta.get("file_path", "")
-                result_dict["authors"] = meta.get("authors", [])
-                result_dict["date"] = meta.get("date", "")
-                result_dict["item_type"] = meta.get("item_type", "")
-                
-                # Set document_title - prefer Zotero title, fallback to vector store
-                doc_title = meta.get("title", "")
-                if not doc_title:
-                    vs_title = self.search_engine.vector_store.get_document_title(zotero_key)
-                    if vs_title:
-                        doc_title = vs_title
-                result_dict["document_title"] = doc_title
-            
-            # If we still don't have a document title, use section info as fallback
-            if not result_dict.get("document_title") and result_dict.get("section_title"):
-                result_dict["document_title"] = f"Document containing: {result_dict['section_title'][:50]}"
-            
-            enriched_results.append(result_dict)
-        
-        return enriched_results
+    # Get documents with PDFs
+    all_docs_with_pdfs = list(server.zotero_client.get_documents_with_pdfs())
 
-    async def get_library_items(self, limit: int = 25) -> list[dict]:
-        """Get items from Zotero library."""
-        items = self.zotero_client.get_items(limit=limit)
-        return [
-            {
-                "key": item.get("key", ""),
-                "title": item.get("data", {}).get("title", ""),
-                "authors": [a.get("firstName", "") + " " + a.get("lastName", "")
-                           for a in item.get("data", {}).get("creators", [])],
-                "date": item.get("data", {}).get("date", ""),
-            }
-            for item in items
-        ]
-
-    async def get_documents_with_pdfs(self) -> list[dict]:
-        """Get all documents that have PDFs."""
-        docs = self.zotero_client.get_documents_with_pdfs()
-        return [
-            {
-                "key": doc.zotero_key,
-                "title": doc.title,
-                "authors": doc.authors,
-                "has_pdf": bool(doc.pdf_path),
-            }
-            for doc in docs
-        ]
-
-    async def start(self):
-        """Start the MCP server with auto-embedding."""
-        # Trigger background embedding (non-blocking)
-        await self.start_auto_embedding()
-
-    async def sync_and_embed(
-        self,
-        embed_sentences: bool = False,
-        document_key: Optional[str] = None
-    ) -> dict:
-        """Sync from Zotero and optionally embed new documents.
-        
-        Uses on-demand PDF fetching - PDFs are fetched temporarily for embedding
-        and not saved to disk permanently.
-        """
-        # Get documents with PDFs
-        all_docs_with_pdfs = list(self.zotero_client.get_documents_with_pdfs())
-
-        if not all_docs_with_pdfs:
-            return {
-                "status": "no_documents",
-                "message": "No documents with PDFs found in Zotero"
-            }
-
-        # Filter by document key if specified
-        docs_to_process = [
-            doc for doc in all_docs_with_pdfs
-            if document_key is None or doc.zotero_key == document_key
-        ]
-
-        if not docs_to_process:
-            return {
-                "status": "no_match",
-                "message": f"No documents matching {document_key}"
-            }
-
-        # Get currently embedded docs
-        embedded = self.embedding_manager.vector_store.get_embedded_documents()
-
-        # Filter to only new/updated documents (using zotero_client approach)
-        pending = [
-            doc for doc in docs_to_process
-            if doc.zotero_key not in embedded or embedded[doc.zotero_key] == 0
-        ]
-
-        if not pending:
-            return {
-                "status": "up_to_date",
-                "message": f"All {len(docs_to_process)} documents already embedded"
-            }
-
-        # Submit for background embedding using on-demand PDF fetching
-        # This uses the new method that fetches PDFs temporarily without saving
-        futures = []
-        for doc in pending:
-            def make_callback(doc_key: str):
-                def cb(status):
-                    self._progress_callback(doc_key, status)
-                return cb
-
-            try:
-                future = self.embedding_manager.embed_document_async_with_client(
-                    doc,
-                    self.zotero_client,
-                    callback=make_callback(doc.zotero_key)
-                )
-                futures.append(future)
-            except Exception as e:
-                logger.error(f"Failed to submit {doc.zotero_key} for embedding: {e}")
-
+    if not all_docs_with_pdfs:
         return {
-            "status": "started",
-            "pending_count": len(pending),
-            "message": f"Started embedding {len(pending)} documents (temp file mode)"
+            "status": "no_documents",
+            "message": "No documents with PDFs found in Zotero"
         }
 
-    def _progress_callback(self, doc_key: str, status):
-        """Handle embedding progress updates."""
-        logger.info(f"Document {doc_key}: sections={status.embedded_sections}")
+    # Filter by document key if specified
+    docs_to_process = [
+        doc for doc in all_docs_with_pdfs
+        if document_key is None or doc.zotero_key == document_key
+    ]
 
-    async def get_embedding_status(self) -> dict:
-        """Get current embedding statistics."""
-        stats = self.search_engine.get_stats()
-        embedded_docs = self.embedding_manager.vector_store.get_embedded_documents()
+    if not docs_to_process:
         return {
-            **stats,
-            "documents": list(embedded_docs.keys())
+            "status": "no_match",
+            "message": f"No documents matching {document_key}"
         }
 
-    async def delete_document(self, document_key: str) -> dict:
-        """Delete all embeddings for a document."""
-        self.embedding_manager.vector_store.delete_document(document_key)
+    # Get currently embedded docs
+    embedded = server.embedding_manager.vector_store.get_embedded_documents()
 
-        # Update metadata
-        embedded = self.embedding_manager.vector_store.get_embedded_documents()
-        if document_key in embedded:
-            del embedded[document_key]
-            self.embedding_manager.vector_store.save_embedded_documents(embedded)
+    # Filter to only new/updated documents
+    pending = [
+        doc for doc in docs_to_process
+        if doc.zotero_key not in embedded or embedded[doc.zotero_key] == 0
+    ]
 
-        return {"status": "deleted", "document_key": document_key}
+    if not pending:
+        return {
+            "status": "up_to_date",
+            "message": f"All {len(docs_to_process)} documents already embedded"
+        }
 
-    async def reembed_document(self, document_key: str) -> dict:
-        """Re-embed a specific document using on-demand PDF fetching."""
-        docs = list(self.zotero_client.get_documents_with_pdfs())
-        target_doc = None
-        for doc in docs:
-            if doc.zotero_key == document_key:
-                target_doc = doc
-                break
+    # Submit for background embedding using on-demand PDF fetching
+    futures = []
+    for doc in pending:
+        def make_callback(doc_key: str):
+            def cb(status):
+                logger.info(f"Document {doc_key}: sections={status.embedded_sections}")
+            return cb
 
-        if not target_doc:
-            return {"status": "error", "message": f"Document {document_key} not found"}
+        try:
+            future = server.embedding_manager.embed_document_async_with_client(
+                doc,
+                server.zotero_client,
+                callback=make_callback(doc.zotero_key)
+            )
+            futures.append(future)
+        except Exception as e:
+            logger.error(f"Failed to submit {doc.zotero_key} for embedding: {e}")
 
-        # Delete existing embeddings first
-        self.embedding_manager.vector_store.delete_document(document_key)
-
-        embedded = self.embedding_manager.vector_store.get_embedded_documents()
-        if document_key in embedded:
-            del embedded[document_key]
-            self.embedding_manager.vector_store.save_embedded_documents(embedded)
-
-        # Re-embed using on-demand PDF fetching (temp file mode)
-        self.embedding_manager.embed_document_async_with_client(
-            target_doc,
-            self.zotero_client
-        )
-
-        return {"status": "reembedding", "document_key": document_key}
-
-    def shutdown(self):
-        """Shutdown the server."""
-        self.embedding_manager.shutdown()
-
-
-# --- MCP Protocol Helpers ---
-
-def create_mcp_response(tool_name: str, result: Any) -> dict:
-    """Create a standardized MCP response."""
     return {
-        "jsonrpc": "2.0",
-        "id": None,
-        "result": {
-            "tool": tool_name,
-            "output": result
-        }
+        "status": "started",
+        "pending_count": len(pending),
+        "message": f"Started embedding {len(pending)} documents (temp file mode)"
     }
 
 
-def create_mcp_error(code: int, message: str) -> dict:
-    """Create a standardized MCP error response."""
+@mcp.tool()
+async def get_embedding_status() -> dict:
+    """Get current embedding statistics and status."""
+    server = get_server()
+    if not server:
+        return {"error": "Server not initialized"}
+        
+    stats = server.search_engine.get_stats()
+    embedded_docs = server.embedding_manager.vector_store.get_embedded_documents()
     return {
-        "jsonrpc": "2.0",
-        "id": None,
-        "error": {
-            "code": code,
-            "message": message
-        }
+        **stats,
+        "documents": list(embedded_docs.keys())
     }
 
 
-# --- Main entry point ---
+@mcp.tool()
+async def delete_document(document_key: str) -> dict:
+    """Delete all embeddings for a specific document.
+    
+    Args:
+        document_key: The Zotero document key to delete
+    """
+    server = get_server()
+    if not server:
+        return {"status": "error", "message": "Server not initialized"}
+        
+    server.embedding_manager.vector_store.delete_document(document_key)
+
+    # Update metadata
+    embedded = server.embedding_manager.vector_store.get_embedded_documents()
+    if document_key in embedded:
+        del embedded[document_key]
+        server.embedding_manager.vector_store.save_embedded_documents(embedded)
+
+    return {"status": "deleted", "document_key": document_key}
+
+
+@mcp.tool()
+async def reembed_document(document_key: str) -> dict:
+    """Re-embed a specific document.
+    
+    Deletes existing embeddings and creates new ones using on-demand PDF fetching.
+    
+    Args:
+        document_key: The Zotero document key to re-embed
+    """
+    server = get_server()
+    if not server:
+        return {"status": "error", "message": "Server not initialized"}
+        
+    docs = list(server.zotero_client.get_documents_with_pdfs())
+    target_doc = None
+    for doc in docs:
+        if doc.zotero_key == document_key:
+            target_doc = doc
+            break
+
+    if not target_doc:
+        return {"status": "error", "message": f"Document {document_key} not found"}
+
+    # Delete existing embeddings first
+    server.embedding_manager.vector_store.delete_document(document_key)
+
+    embedded = server.embedding_manager.vector_store.get_embedded_documents()
+    if document_key in embedded:
+        del embedded[document_key]
+        server.embedding_manager.vector_store.save_embedded_documents(embedded)
+
+    # Re-embed using on-demand PDF fetching (temp file mode)
+    server.embedding_manager.embed_document_async_with_client(
+        target_doc,
+        server.zotero_client
+    )
+
+    return {"status": "reembedding", "document_key": document_key}
+
+
+# =============================================================================
+# Main entry points
+# =============================================================================
+
+async def run_mcp_server(transport: str = "stdio"):
+    """Run the MCP server.
+    
+    Args:
+        transport: Transport to use - "stdio" or "streamable-http"
+    """
+    # Initialize config and create server instance
+    config = Config()
+    server_instance = MCPZoteroServer(config)
+    set_server_instance(server_instance)
+    
+    logger.info(f"Starting ZoteroRAG MCP server with {transport} transport...")
+    
+    if transport == "stdio":
+        await mcp.run()
+    elif transport == "streamable-http":
+        # Run with streamable HTTP transport
+        await mcp.run(transport="streamable-http")
+    else:
+        raise ValueError(f"Unknown transport: {transport}")
+
 
 def main():
-    """Run the MCP server (standalone)."""
+    """Run the MCP server using stdio transport."""
+    import asyncio
     logging.basicConfig(level=logging.INFO)
-    
-    config = Config()
-    server = MCPZoteroServer(config)
-
-    logger.info("MCP server starting on port 23120...")
+    logger.info("Starting ZoteroRAG MCP server...")
     
     try:
-        import asyncio
-        # Start auto-embedding in background (non-blocking)
-        asyncio.get_event_loop().run_until_complete(server.start_auto_embedding())
-        
-        # Keep running
-        import time
-        while True:
-            time.sleep(1)
+        asyncio.run(run_mcp_server(transport="stdio"))
     except KeyboardInterrupt:
         logger.info("Shutting down...")
-        server.shutdown()
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+        raise
 
 
 if __name__ == "__main__":

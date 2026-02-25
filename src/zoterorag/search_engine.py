@@ -6,6 +6,7 @@ import ollama
 
 from .config import Config
 from .models import SearchResult, Document, SentenceWindow
+from .embedding_manager import EmbeddingManager
 from .vector_store import VectorStore
 
 
@@ -18,6 +19,8 @@ class SearchEngine:
     def __init__(self, config: Config):
         self.config = config
         self.vector_store = VectorStore(config.VECTOR_STORE_DIR)
+        # EmbeddingManager for reranking (lazy init)
+        self._embedding_manager: Optional[EmbeddingManager] = None
         
         # Check for dimension mismatch on init and warn user
         if self.config.EMBEDDING_DIMENSIONS > 0:
@@ -28,6 +31,13 @@ class SearchEngine:
                     f"but existing embeddings are {detected} dimensions. "
                     f"Set EMBEDDING_DIMENSIONS={detected} or re-embed all documents."
                 )
+
+    @property
+    def embedding_manager(self) -> EmbeddingManager:
+        """Lazy initialization of embedding manager for reranking."""
+        if self._embedding_manager is None:
+            self._embedding_manager = EmbeddingManager(self.config)
+        return self._embedding_manager
 
     # --- Stage 1: Section search ---
 
@@ -292,8 +302,9 @@ class SearchEngine:
         if not section_results:
             return []
 
-        # Stage 2: Find and rerank sentence windows in each section
-        search_results: List[SearchResult] = []
+        # Stage 2: Find sentence candidates from each section (using embeddings for filtering)
+        # Collect all candidates with their metadata before reranking
+        sentence_candidates: List[tuple] = []  # (text, document_key, section_title, relevance_score)
         
         for result_item in section_results:
             if len(result_item) == 3:
@@ -320,32 +331,71 @@ class SearchEngine:
                     top_k=top_sentences_per_section
                 )
                 
-                # matched_windows now contains (window_text, score) tuples
-                for window_text, score in matched_windows:
-                    search_results.append(SearchResult(
-                        text=window_text,  # Actual sentence text from sliding window
-                        document_title="",  # Will be enriched by MCP server
-                        section_title=section.title,
-                        zotero_key=document_key or "",
-                        relevance_score=section_score,
-                        rerank_score=score
+                # Add candidates from this section (all of them for reranking)
+                for window_text, emb_score in matched_windows:
+                    sentence_candidates.append((
+                        window_text,
+                        document_key or "",
+                        section.title,
+                        section_score,  # Section-level relevance score
+                        emb_score       # Sentence embedding similarity score
                     ))
             else:
-                # Use pre-embedded sentence windows - rerank them
+                # Use pre-embedded sentence windows - filter with embeddings first
                 candidates = [w.text for w in windows]
                 ranked = self._rerank_candidates(query, candidates)
 
-                for idx, score in ranked[:top_sentences_per_section]:
-                    search_results.append(SearchResult(
-                        text=windows[idx].text,
-                        document_title="",
-                        section_title=f"{section.title}",
-                        zotero_key=document_key or "",
-                        relevance_score=section_score,
-                        rerank_score=score
+                # Add top candidates from this section (for reranking later)
+                for idx, emb_score in ranked[:top_sentences_per_section]:
+                    sentence_candidates.append((
+                        windows[idx].text,
+                        document_key or "",
+                        f"{section.title}",
+                        section_score,  # Section-level relevance score
+                        emb_score       # Sentence embedding similarity score
                     ))
 
-        # Sort by rerank score and return top results
+        if not sentence_candidates:
+            return []
+
+        # Stage 2b: Rerank ALL collected sentence candidates using the reranker model
+        # This is where we apply the dedicated reranker for final scoring
+        candidate_texts = [c[0] for c in sentence_candidates]
+        
+        try:
+            # Use the reranker model to score all candidates
+            rerank_scores = self.embedding_manager._rerank(query, candidate_texts)
+            
+            # Rebuild results with both relevance_score (from embeddings) and rerank_score (from reranker)
+            search_results: List[SearchResult] = []
+            for i, (text, doc_key, section_title, section_score, emb_score) in enumerate(sentence_candidates):
+                rerank_score = rerank_scores[i] if i < len(rerank_scores) else emb_score
+                
+                # Use the embedding score as relevance_score and reranker score as rerank_score
+                search_results.append(SearchResult(
+                    text=text,
+                    document_title="",  # Will be enriched by MCP server
+                    section_title=section_title,
+                    zotero_key=doc_key,
+                    relevance_score=emb_score,      # Initial embedding similarity score
+                    rerank_score=rerank_score       # Final reranker model score
+                ))
+                
+        except Exception as e:
+            logger.warning(f"Reranking failed, falling back to embedding scores: {e}")
+            # Fallback: use embedding scores if reranking fails
+            search_results = []
+            for text, doc_key, section_title, section_score, emb_score in sentence_candidates:
+                search_results.append(SearchResult(
+                    text=text,
+                    document_title="",
+                    section_title=section_title,
+                    zotero_key=doc_key,
+                    relevance_score=emb_score,
+                    rerank_score=emb_score  # Use same score for both
+                ))
+
+        # Sort by rerank score (from reranker model) and return top results
         search_results.sort(key=lambda x: x.rerank_score, reverse=True)
         return search_results[:top_sections * top_sentences_per_section]
 

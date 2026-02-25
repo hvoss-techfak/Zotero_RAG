@@ -38,12 +38,15 @@ class EmbeddingManager:
         """Lazy initialization of thread pool."""
         if self._executor is None:
             max_workers = getattr(self.config, 'MAX_EMBEDDING_WORKERS', 4)
+            logger.info(f"[EmbeddingManager] Initializing ThreadPoolExecutor with {max_workers} workers")
             self._executor = ThreadPoolExecutor(max_workers=max_workers)
+            logger.info(f"[EmbeddingManager] ThreadPoolExecutor initialized successfully")
         return self._executor
 
     def shutdown(self):
         """Shutdown the executor."""
         if self._executor:
+            logger.info("[EmbeddingManager] Shutting down ThreadPoolExecutor")
             self._executor.shutdown(wait=True)
             self._executor = None
 
@@ -75,26 +78,189 @@ class EmbeddingManager:
         )
         return response["embedding"]
 
+    def _embed_batch_ollama(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for multiple texts using Ollama batch API.
+        
+        This method handles chunking internally to avoid memory issues with large batches.
+        Uses the 'prompt' parameter as a list to enable batch processing in Ollama.
+        
+        Args:
+            texts: List of text strings to embed
+            
+        Returns:
+            List of embedding vectors, one per input text
+        """
+        if not texts:
+            return []
+        
+        batch_size = getattr(self.config, 'BATCH_EMBEDDING_SIZE', 32)
+        all_embeddings: List[List[float]] = []
+        
+        # Process in chunks
+        for i in range(0, len(texts), batch_size):
+            chunk = texts[i:i + batch_size]
+            
+            try:
+                # Use batch embedding API - pass list of prompts
+                response = ollama.embeddings(
+                    model=self.config.EMBEDDING_MODEL,
+                    prompt=chunk,  # Pass as list for batch processing
+                    options=self._get_embedding_options()
+                )
+                
+                # Handle both single and batch responses
+                if isinstance(response.get("embedding"), list):
+                    # Single embedding returned (Ollama may return just one)
+                    all_embeddings.append(response["embedding"])
+                elif "embeddings" in response:
+                    # Batch response format
+                    all_embeddings.extend(response["embeddings"])
+                else:
+                    # Fallback: try to get from different response structure
+                    logger.warning(f"Unexpected embedding response format: {response.keys()}")
+                    # If we got here, try calling individually as fallback
+                    for text in chunk:
+                        single_response = ollama.embeddings(
+                            model=self.config.EMBEDDING_MODEL,
+                            prompt=text,
+                            options=self._get_embedding_options()
+                        )
+                        all_embeddings.append(single_response["embedding"])
+                        
+            except Exception as e:
+                logger.warning(f"Batch embedding failed for chunk {i//batch_size}, falling back to individual: {e}")
+                # Fallback: process individually
+                for text in chunk:
+                    single_emb = self.embed_text(text)
+                    all_embeddings.append(single_emb)
+        
+        return all_embeddings
+
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings for multiple texts."""
-        # Process one at a time due to Ollama API
-        embeddings = []
-        for text in texts:
-            emb = self.embed_text(text)
-            embeddings.append(emb)
-        return embeddings
+        """Generate embeddings for multiple texts using batch API.
+        
+        Args:
+            texts: List of text strings to embed
+            
+        Returns:
+            List of embedding vectors
+        """
+        if not texts:
+            return []
+        
+        # Use batch embedding for efficiency
+        return self._embed_batch_ollama(texts)
+
+    def calculate_relevance_score(self, embedding: List[float]) -> float:
+        """Calculate relevance score from embedding vector.
+        
+        Uses the cross-encoder approach where higher magnitude and positive values
+        in the embedding indicate stronger relevance to the query.
+        
+        Args:
+            embedding: The embedding vector from reranker model
+            
+        Returns:
+            Relevance score between 0 and 1
+        """
+        if not embedding:
+            return 0.0
+        
+        sum_positive = 0.0
+        sum_total = 0.0
+        
+        for val in embedding:
+            sum_total += val * val
+            if val > 0:
+                sum_positive += val
+        
+        if sum_total == 0:
+            return 0.0
+        
+        # Normalize and combine magnitude with positive bias
+        magnitude = (sum_total ** 0.5) / len(embedding)
+        positive_ratio = sum_positive / len(embedding)
+        
+        return (magnitude + positive_ratio) / 2
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     def _rerank(self, query: str, candidates: List[str]) -> List[float]:
-        """Rerank candidates using Ollama reranker."""
-        response = ollama.generate(
-            model=self.config.RERANKER_MODEL,
-            prompt=f"Given the query '{query}', rate each document from 0-1 relevance:\n\n" +
-                   "\n".join([f"{i}: {doc[:200]}..." for i, doc in enumerate(candidates)]),
-            options={"num_ctx": 32768}
-        )
-        # Parse scores from response - simplified implementation
-        return [0.9] * len(candidates)  # Placeholder: actual impl needs score parsing
+        """Rerank candidates using Ollama reranker model.
+        
+        Uses the cross-encoder approach where we create a combined prompt
+        (query + document) for each candidate and get embeddings from the
+        reranker model. The embedding magnitude indicates relevance.
+        
+        Args:
+            query: The search query
+            candidates: List of document/candidate texts to rerank
+            
+        Returns:
+            List of relevance scores, one per candidate
+        """
+        if not candidates:
+            return []
+        
+        # Get options for the reranker model
+        opts = {"num_ctx": 32768}
+        if self.config.EMBEDDING_DIMENSIONS > 0:
+            opts["dimensions"] = self.config.EMBEDDING_DIMENSIONS
+        
+        scores: List[float] = []
+        
+        for candidate in candidates:
+            # Create combined prompt for cross-encoder style scoring
+            rerank_prompt = f"Query: {query}\n\nDocument: {candidate}\n\nRelevance:"
+            
+            try:
+                response = ollama.embeddings(
+                    model=self.config.RERANKER_MODEL,
+                    prompt=rerank_prompt,
+                    options=opts
+                )
+                
+                embedding = response.get("embedding", [])
+                score = self.calculate_relevance_score(embedding)
+                scores.append(score)
+                
+            except Exception as e:
+                logger.warning(f"Reranking failed for candidate, using fallback: {e}")
+                # Fallback to neutral score on error
+                scores.append(0.5)
+        
+        return scores
+
+    def rerank_documents(
+        self,
+        query: str,
+        documents: List[tuple[str, float]]
+    ) -> List[tuple[str, float]]:
+        """Rerank document text+score pairs using the reranker model.
+        
+        This is the main entry point for reranking. It takes documents that were
+        initially scored via embedding similarity and re-scores them using
+        the dedicated reranker model.
+        
+        Args:
+            query: The search query
+            documents: List of (text, initial_score) tuples to rerank
+            
+        Returns:
+            List of (text, rerank_score) tuples sorted by rerank_score descending
+        """
+        if not documents:
+            return []
+        
+        candidates = [doc[0] for doc in documents]
+        scores = self._rerank(query, candidates)
+        
+        # Combine original text with new rerank scores
+        results = list(zip(candidates, scores))
+        
+        # Sort by rerank score descending
+        results.sort(key=lambda x: x[1], reverse=True)
+        
+        return results
 
     # --- Document processing ---
 
