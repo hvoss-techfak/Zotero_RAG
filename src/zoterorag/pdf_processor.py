@@ -139,6 +139,129 @@ class PDFProcessor:
                 lines.append(line)
         return "\n".join(lines)
 
+    # ---------- Markdown Sanitization Methods ----------
+
+    def sanitize_markdown(self, text: str) -> str:
+        """Convert markdown-formatted text to plain text.
+        
+        Strips all markdown annotations while preserving readable content.
+        
+        Args:
+            text: Text with potential markdown formatting
+            
+        Returns:
+            Plain text without markdown annotations
+        """
+        if not text:
+            return ""
+        
+        # Apply sanitization steps in order
+        text = self._strip_heading_markers(text)  # Remove heading markers (#), keep content
+        text = self._remove_images(text)
+        text = self._convert_links_to_text(text)
+        text = self._extract_code_from_fenced_blocks(text)  # Extract code content before removing fences
+        text = self._strip_code_formatting(text)  # Remove inline code markers
+        text = self._strip_bold_italic(text)
+        text = self._cleanup_blockquotes(text)
+        text = self._remove_horizontal_rules(text)
+        text = self._cleanup_lists(text)
+        text = self._normalize_whitespace(text)
+        
+        return text.strip()
+
+    def _strip_heading_markers(self, text: str) -> str:
+        """Remove markdown heading markers (#), keeping the content."""
+        # Remove leading # and space from ATX-style headings
+        lines = []
+        for line in text.split("\n"):
+            # Match lines starting with 1-6 hash symbols followed by space, keep rest of line
+            stripped = re.sub(r'^#{1,6}\s+', '', line)
+            lines.append(stripped)
+        return "\n".join(lines)
+
+    def _extract_code_from_fenced_blocks(self, text: str) -> str:
+        """Extract content from fenced code blocks while removing the fences."""
+        # Pattern matches ```language...content...``` (non-greedy)
+        result = []
+        in_code_block = False
+        lines = text.split("\n")
+        
+        for line in lines:
+            if re.match(r'^```', line):
+                # Toggle state - don't include the fence line itself
+                in_code_block = not in_code_block
+                continue
+            
+            if in_code_block:
+                # Inside code block - keep the content
+                result.append(line)
+            else:
+                result.append(line)
+        
+        return "\n".join(result)
+
+    def _remove_images(self, text: str) -> str:
+        """Remove image references entirely."""
+        # ![alt](url) or ![alt](url "title")
+        return re.sub(r'!\[([^\]]*)\]\([^)]+\)', '', text)
+
+    def _convert_links_to_text(self, text: str) -> str:
+        """Convert links to just the link text."""
+        # [text](url) -> text
+        return re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+
+    def _strip_code_formatting(self, text: str) -> str:
+        """Strip inline code markers (fenced blocks handled separately)."""
+        # Note: Fenced code block content is now preserved via _extract_code_from_fenced_blocks
+        # This only removes inline code (`code`)
+        text = re.sub(r'`([^`]+)`', r'\1', text)
+        return text
+
+    def _strip_bold_italic(self, text: str) -> str:
+        """Remove bold and italic markers."""
+        # **bold** or __bold__
+        text = re.sub(r'\*\*([^\*]+)\*\*', r'\1', text)
+        text = re.sub(r'__([^_]+)__', r'\1', text)
+        # *italic* or _italic_
+        text = re.sub(r'(?<!\w)\*([^\*]+)\*(?!\w)', r'\1', text)
+        text = re.sub(r'(?<![a-zA-Z])_([^_]+)_(?![a-zA-Z])', r'\1', text)
+        return text
+
+    def _cleanup_blockquotes(self, text: str) -> str:
+        """Convert blockquotes to plain text."""
+        # > quote or >>> nested
+        lines = []
+        for line in text.split("\n"):
+            # Remove leading > markers (including nested >)
+            cleaned = re.sub(r'^>+\s*', '', line)
+            lines.append(cleaned)
+        return "\n".join(lines)
+
+    def _remove_horizontal_rules(self, text: str) -> str:
+        """Remove horizontal rule lines."""
+        # ---, ***, ___ on their own lines
+        text = re.sub(r'^[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)
+        return text
+
+    def _cleanup_lists(self, text: str) -> str:
+        """Convert list markers to plain text items."""
+        lines = []
+        for line in text.split("\n"):
+            # Match -, *, +, or numbered lists at start of line
+            cleaned = re.sub(r'^[\s]*([-*+]|\d+\.)\s+', '', line)
+            lines.append(cleaned)
+        return "\n".join(lines)
+
+    def _normalize_whitespace(self, text: str) -> str:
+        """Normalize whitespace while preserving paragraph breaks."""
+        # Replace multiple blank lines with single blank line
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        # Replace multiple spaces with single space within lines
+        text = re.sub(r' +', ' ', text)
+        # Remove trailing whitespace from each line
+        lines = [line.rstrip() for line in text.split("\n")]
+        return "\n".join(lines)
+
     def extract_quarter_sections(self, pdf_path: str | Path) -> List[Section]:
         """Extract sections by splitting each page into equal parts based on line count.
         
@@ -176,6 +299,8 @@ class PDFProcessor:
             text = str(md_text) if md_text else ""
             lines = [l for l in text.split("\n") if l.strip()]
             if lines:
+                # Sanitize markdown formatting from extracted text
+                sanitized_text = self.sanitize_markdown(text)
                 return [Section(
                     id=f"{path.stem}_sec_0",
                     document_id=path.stem,
@@ -183,7 +308,7 @@ class PDFProcessor:
                     level=1,
                     start_page=1,
                     end_page=1,
-                    text=text.strip(),
+                    text=sanitized_text.strip(),
                     page_section=None,  # No splitting applied
                 )]
             return []
@@ -219,6 +344,9 @@ class PDFProcessor:
                 
                 section_text = "\n".join(section_lines)
                 
+                # Sanitize markdown formatting from extracted text
+                sanitized_text = self.sanitize_markdown(section_text)
+                
                 sections.append(Section(
                     id=f"{path.stem}_sec_{section_index}",
                     document_id=path.stem,
@@ -226,7 +354,7 @@ class PDFProcessor:
                     level=1,
                     start_page=page,
                     end_page=page,
-                    text=section_text.strip(),
+                    text=sanitized_text.strip(),
                     page_section=i + 1,  # 1-indexed position within the page
                 ))
                 section_index += 1

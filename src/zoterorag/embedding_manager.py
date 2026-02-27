@@ -79,7 +79,7 @@ class EmbeddingManager:
     def executor(self) -> ThreadPoolExecutor:
         """Lazy initialization of thread pool."""
         if self._executor is None:
-            max_workers = getattr(self.config, 'MAX_EMBEDDING_WORKERS', 4)
+            max_workers = getattr(self.config, 'MAX_EMBEDDING_WORKERS', 1)
             logger.info(f"[EmbeddingManager] Initializing ThreadPoolExecutor with {max_workers} workers")
             self._executor = ThreadPoolExecutor(max_workers=max_workers)
             logger.info(f"[EmbeddingManager] ThreadPoolExecutor initialized successfully")
@@ -121,76 +121,67 @@ class EmbeddingManager:
         return response["embedding"]
 
     def _embed_batch_ollama(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings for multiple texts using Ollama batch API.
-        
-        This method handles chunking internally to avoid memory issues with large batches.
-        Uses the 'prompt' parameter as a list to enable batch processing in Ollama.
-        
+        """Generate embeddings for multiple texts using Ollama.
+
+        Note: The `ollama` Python client versions differ in whether they accept a
+        list for `prompt`. Some versions validate `prompt` as a single string
+        (Pydantic `EmbeddingsRequest.prompt: str`) and will raise a validation
+        error if a list is passed.
+
+        To stay compatible and avoid hard dependency pinning, we embed in chunks
+        but send one request per text (still benefiting from our own chunking
+        and retry logic).
+
         Args:
             texts: List of text strings to embed
-            
+
         Returns:
             List of embedding vectors, one per input text
         """
         if not texts:
             return []
-        
+
+        # Normalize defensively: downstream should always see strings.
+        normalized: List[str] = []
+        for t in texts:
+            if t is None:
+                normalized.append("")
+            elif isinstance(t, str):
+                normalized.append(t)
+            else:
+                normalized.append(str(t))
+
         batch_size = getattr(self.config, 'BATCH_EMBEDDING_SIZE', 32)
         all_embeddings: List[List[float]] = []
-        
-        # Process in chunks
-        for i in range(0, len(texts), batch_size):
-            chunk = texts[i:i + batch_size]
-            
-            try:
-                # Use batch embedding API - pass list of prompts
-                response = ollama.embeddings(
-                    model=self.config.EMBEDDING_MODEL,
-                    prompt=chunk,  # Pass as list for batch processing
-                    options=self._get_embedding_options()
-                )
-                
-                # Handle both single and batch responses
-                if isinstance(response.get("embedding"), list):
-                    # Single embedding returned (Ollama may return just one)
-                    all_embeddings.append(response["embedding"])
-                elif "embeddings" in response:
-                    # Batch response format
-                    all_embeddings.extend(response["embeddings"])
-                else:
-                    # Fallback: try to get from different response structure
-                    logger.warning(f"Unexpected embedding response format: {response.keys()}")
-                    # If we got here, try calling individually as fallback
-                    for text in chunk:
-                        single_response = ollama.embeddings(
-                            model=self.config.EMBEDDING_MODEL,
-                            prompt=text,
-                            options=self._get_embedding_options()
-                        )
-                        all_embeddings.append(single_response["embedding"])
-                        
-            except Exception as e:
-                logger.warning(f"Batch embedding failed for chunk {i//batch_size}, falling back to individual: {e}")
-                # Fallback: process individually
-                for text in chunk:
-                    single_emb = self.embed_text(text)
-                    all_embeddings.append(single_emb)
-        
+
+        for i in range(0, len(normalized), batch_size):
+            chunk = normalized[i:i + batch_size]
+
+            # Embed each text individually to satisfy `prompt: str`.
+            for text in chunk:
+                try:
+                    all_embeddings.append(self.embed_text(text))
+                except Exception as e:
+                    # Preserve existing behaviour: surface failures but keep going.
+                    logger.warning(
+                        f"Embedding failed for item {i + len(all_embeddings) - i} in chunk {i//batch_size}: {e}"
+                    )
+                    all_embeddings.append([])
+
         return all_embeddings
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings for multiple texts using batch API.
-        
+        """Generate embeddings for multiple texts.
+
         Args:
             texts: List of text strings to embed
-            
+
         Returns:
             List of embedding vectors
         """
         if not texts:
             return []
-        
-        # Use batch embedding for efficiency
+
         return self._embed_batch_ollama(texts)
 
     def calculate_relevance_score(self, embedding: List[float]) -> float:
