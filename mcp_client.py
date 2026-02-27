@@ -1,265 +1,262 @@
 #!/usr/bin/env python3
-"""MCP Client for ZoteroRAG.
+"""MCP Client - Test script to call ZoteroRAG MCP server methods.
 
-This client connects to the running ZoteroRAG MCP server and calls its tools.
+Usage:
+    uv run scripts/mcp_client.py [--search QUERY] [--library] [--status]
 
-Examples:
-  - Query best matching sentences:
-      uv run mcp_client.py --sentence "my query" --top-sections 5 --top-sentences 10
-
-Notes:
-- This client expects the MCP server to be runnable as a subprocess (stdio transport).
-- It uses the MCP tool `search_sentences`, which returns sentence windows enriched with
-  Title/Authors/BibTeX/Published-at (date) and a file URL.
+This script directly calls the MCPZoteroServer methods and displays results nicely.
 """
-
-from __future__ import annotations
 
 import argparse
 import asyncio
 import json
 import sys
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+
+# Add src to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from zoterorag.config import Config
+from zoterorag.mcp_server import MCPZoteroServer
 
 
-def _to_jsonable(obj: Any) -> Any:
-    """Best-effort conversion of MCP result objects into JSON-serializable data."""
-    if obj is None:
-        return None
-
-    if isinstance(obj, (str, int, float, bool)):
-        return obj
-
-    if isinstance(obj, dict):
-        return {k: _to_jsonable(v) for k, v in obj.items()}
-
-    if isinstance(obj, list):
-        return [_to_jsonable(v) for v in obj]
-
-    # Pydantic models / MCP result types often implement model_dump()
-    dump = getattr(obj, "model_dump", None)
-    if callable(dump):
-        try:
-            return _to_jsonable(dump())
-        except Exception:
-            pass
-
-    # Fallback: try __dict__
-    d = getattr(obj, "__dict__", None)
-    if isinstance(d, dict):
-        return _to_jsonable(d)
-
-    return str(obj)
+def format_json(data: dict | list) -> str:
+    """Format data as pretty JSON."""
+    return json.dumps(data, indent=2, ensure_ascii=False)
 
 
-def _format_json(data: Any) -> str:
-    return json.dumps(_to_jsonable(data), indent=2, ensure_ascii=False)
+def print_section(title: str):
+    """Print a section header."""
+    print(f"\n{'=' * 60}")
+    print(f" {title}")
+    print('=' * 60)
 
 
-def _print_section(title: str) -> None:
-    print(f"\n{'=' * 80}")
-    print(f"{title}")
-    print(f"{'=' * 80}")
+async def run_library_items(server: MCPZoteroServer, limit: int = 10):
+    """Get and display library items."""
+    print_section("Library Items")
+    
+    try:
+        items = await server.get_library_items(limit=limit)
+        
+        if not items:
+            print("No items found in library.")
+            return
+            
+        for i, item in enumerate(items, 1):
+            print(f"\n[{i}] {item.get('title', 'Untitled')}")
+            authors = item.get('authors', [])
+            if authors:
+                print(f"    Authors: {', '.join(authors)}")
+            date = item.get('date')
+            if date:
+                print(f"    Date: {date}")
+            key = item.get('key', '')
+            if key:
+                print(f"    Key: {key}")
+                
+        print(f"\nTotal: {len(items)} items")
+        
+    except Exception as e:
+        print(f"Error fetching library items: {e}")
 
 
-def _shorten(text: str, max_len: int = 260) -> str:
-    text = (text or "").strip().replace("\n", " ")
-    if len(text) <= max_len:
-        return text
-    return text[: max_len - 1] + "…"
-
-
-@dataclass
-class SentenceHit:
-    text: str
-    document_title: str
-    section_title: str
-    zotero_key: str
-    score: float
-    authors: list[str]
-    date: str
-    bibtex: str
-    file_path: str
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "SentenceHit":
-        return cls(
-            text=d.get("text", ""),
-            document_title=d.get("document_title", ""),
-            section_title=d.get("section_title", ""),
-            zotero_key=d.get("zotero_key", ""),
-            score=float(d.get("rerank_score", d.get("relevance_score", 0.0)) or 0.0),
-            authors=d.get("authors") or [],
-            date=d.get("date", ""),
-            bibtex=d.get("bibtex", ""),
-            file_path=d.get("file_path", ""),
+async def run_search(server: MCPZoteroServer, query: str):
+    """Search documents and display results."""
+    print_section(f"Search Results for: '{query}'")
+    
+    try:
+        results = await server.search_documents(
+            query=query,
+            top_sections=5,
+            top_sentences_per_section=3
         )
-
-
-def _get_mapping(maybe: Any) -> dict:
-    if isinstance(maybe, dict):
-        return maybe
-    return {}
-
-
-async def _call_search_sentences(args) -> list[dict]:
-    """Spawn the server as a stdio subprocess and call the MCP tool."""
-
-    # Local import so this script can still show help even if deps aren't installed.
-    from mcp import ClientSession
-    from mcp.client.stdio import stdio_client, StdioServerParameters
-
-    repo_root = Path(__file__).parent
-
-    # Start the server via stdio transport.
-    server_params = StdioServerParameters(
-        command=sys.executable,
-        args=[str(repo_root / "main.py")],
-        cwd=str(repo_root),
-    )
-
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-
-            tool_args = {
-                "query": args.sentence,
-                "document_key": args.document_key,
-                "top_sections": args.top_sections,
-                "top_sentences": args.top_sentences,
-                "ensure_sentence_embeddings": not args.no_persist,
-            }
-
-            result = await session.call_tool("search_sentences", tool_args)
-
-            # Prefer FastMCP structuredContent (json_response=True)
-            structured = getattr(result, "structuredContent", None)
-            if isinstance(structured, dict):
-                maybe = structured.get("result")
-                if isinstance(maybe, list):
-                    return [r for r in maybe if isinstance(r, dict)]
-
-            # Fall back: if tool returned raw JSON text content, parse it
-            content = getattr(result, "content", None)
-            if isinstance(content, list) and content:
-                first = content[0]
-                text = getattr(first, "text", None)
-                if isinstance(text, str) and text.strip():
-                    try:
-                        parsed = json.loads(text)
-                        if isinstance(parsed, list):
-                            return [r for r in parsed if isinstance(r, dict)]
-                        if isinstance(parsed, dict) and "result" in parsed and isinstance(parsed["result"], list):
-                            return [r for r in parsed["result"] if isinstance(r, dict)]
-                        if isinstance(parsed, dict):
-                            return [parsed]
-                    except Exception:
-                        pass
-
-            # Last resort: normalize whatever we got into plain Python data.
-            normalized = _to_jsonable(result)
-            if isinstance(normalized, dict):
-                sc = normalized.get("structuredContent")
-                if isinstance(sc, dict):
-                    maybe = sc.get("result")
-                    if isinstance(maybe, list):
-                        return [r for r in maybe if isinstance(r, dict)]
-
-            return [{"error": "Unexpected MCP response shape", "raw": str(result)}]
-
-
-def _print_sentence_hits(raw: list[dict], show_bibtex: bool = False) -> None:
-    hits = [SentenceHit.from_dict(r) for r in (raw or []) if isinstance(r, dict)]
-
-    if not hits:
-        print("No sentence matches returned.")
-        return
-
-    print(f"Returned {len(hits)} sentence match(es).\n")
-
-    for i, h in enumerate(hits, 1):
-        print(f"[{i}] score={h.score:.4f}  key={h.zotero_key}")
-        if h.document_title:
-            print(f"    Title: {h.document_title}")
-        if h.authors:
-            print(f"    Authors: {', '.join(h.authors)}")
-        if h.date:
-            print(f"    Published at: {h.date}")
-        if h.section_title:
-            print(f"    Section: {h.section_title}")
-        if h.file_path:
-            print(f"    PDF: {h.file_path}")
-
-        print(f"    Sentence: {_shorten(h.text)}")
-
-        if show_bibtex and h.bibtex:
-            print("    BibTeX:")
-            for line in h.bibtex.strip().splitlines():
-                print(f"      {line}")
+        
+        if not results:
+            print("No results found.")
+            return
+            
+        print(f"Found {len(results)} result(s):\n")
+        
+        for i, r in enumerate(results, 1):
+            print(r)
+            doc_title = r.get('document_title', 'Untitled Document')
+            section_title = r.get('section_title', '')
+            content = r.get('text', '')[:300] if r.get('text') else ''
+            
+            # Show all available metadata
+            zotero_key = r.get('zotero_key', '')
+            authors = r.get('authors', [])
+            date = r.get('date', '')
+            bibtex = r.get('bibtex', '')
+            item_type = r.get('item_type', '')
+            
+            print(f"[{i}] Document: {doc_title}")
+            if zotero_key:
+                print(f"    Zotero Key: {zotero_key}")
+            if authors:
+                print(f"    Authors: {', '.join(authors) if isinstance(authors, list) else authors}")
+            if date:
+                print(f"    Date: {date}")
+            if item_type:
+                print(f"    Type: {item_type}")
+            if section_title:
+                print(f"    Section: {section_title}")
+            
+            # Show relevance scores
+            rel_score = r.get('relevance_score', 0)
+            rerank_score = r.get('rerank_score', 0)
+            print(f"    Relevance: {rel_score:.4f} | Rerank: {rerank_score:.4f}")
+            
+            if content:
+                print(f"    Content: {content}...")
+                
+            # Show metadata if available
+            if bibtex:
+                print(f"    BibTeX: Available ({len(bibtex)} chars)")
+                
             print()
+            
+        return results
+        
+    except Exception as e:
+        print(f"Error searching documents: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 
-async def main() -> None:
-    parser = argparse.ArgumentParser(description="ZoteroRAG MCP client")
+async def run_embedding_status(server: MCPZoteroServer):
+    """Get and display embedding status."""
+    print_section("Embedding Status")
+    
+    try:
+        status = await server.get_embedding_status()
+        
+        # Format as nice output
+        total_sections = status.get('total_sections', 0)
+        total_sentences = status.get('total_sentence_windows', 0)
+        documents = status.get('documents', [])
+        
+        print(f"Total sections embedded: {total_sections}")
+        print(f"Total sentence windows indexed: {total_sentences}")
+        print(f"Documents with embeddings: {len(documents)}")
+        
+        if documents:
+            print("\nEmbedded document keys:")
+            for key in documents[:20]:
+                print(f"  - {key}")
+            if len(documents) > 20:
+                print(f"  ... and {len(documents) - 20} more")
+                
+    except Exception as e:
+        print(f"Error getting embedding status: {e}")
 
+
+async def run_documents_with_pdfs(server: MCPZoteroServer):
+    """Get documents with PDFs."""
+    print_section("Documents with PDFs")
+    
+    try:
+        docs = await server.get_documents_with_pdfs()
+        
+        if not docs:
+            print("No documents with PDFs found.")
+            return
+            
+        for doc in docs:
+            key = doc.get('key', '')
+            title = doc.get('title', 'Untitled')
+            has_pdf = doc.get('has_pdf', False)
+            
+            status = "✓ Has PDF" if has_pdf else "✗ No PDF"
+            print(f"  {key}: {title[:50]}... [{status}]")
+            
+        print(f"\nTotal: {len(docs)} documents with PDFs")
+        
+    except Exception as e:
+        print(f"Error getting documents with PDFs: {e}")
+
+
+async def main():
+    parser = argparse.ArgumentParser(description="ZoteroRAG MCP Client")
     parser.add_argument(
-        "--sentence",
-        "-s",
-        required=True,
-        help="Query sentence/text to match against your library",
+        "--search", "-s",
+        type=str,
+        help="Search query"
     )
     parser.add_argument(
-        "--document-key",
-        default=None,
-        help="Optional Zotero document key to restrict search",
+        "--library", "-l",
+        action="store_true",
+        help="Show library items"
     )
     parser.add_argument(
-        "--top-sections",
-        type=int,
-        default=5,
-        help="How many top sections to consider (default: 5)",
+        "--status",
+        action="store_true", 
+        help="Show embedding status"
     )
     parser.add_argument(
-        "--top-sentences",
+        "--pdfs",
+        action="store_true",
+        help="Show documents with PDFs"
+    )
+    parser.add_argument(
+        "--all",
+        "-a",
+        action="store_true",
+        help="Run all checks (library, status, pdfs)"
+    )
+    parser.add_argument(
+        "--json", "-j",
+        action="store_true",
+        help="Output results as JSON"
+    )
+    parser.add_argument(
+        "--limit",
         type=int,
         default=10,
-        help="How many top sentences to return (default: 10)",
+        help="Limit for library items (default: 10)"
     )
-    parser.add_argument(
-        "--no-persist",
-        action="store_true",
-        help="Don't persistently embed sentences (only use existing sentence embeddings)",
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Print raw JSON response",
-    )
-    parser.add_argument(
-        "--bibtex",
-        action="store_true",
-        help="Print BibTeX entries",
-    )
-
+    
     args = parser.parse_args()
-
-    _print_section("ZoteroRAG: sentence search")
-    print(f"Query: {args.sentence}")
-    print(f"Top sections: {args.top_sections} | Top sentences: {args.top_sentences}")
-    if args.document_key:
-        print(f"Document key filter: {args.document_key}")
-    if args.no_persist:
-        print("Sentence persistence: OFF")
-
-    raw = await _call_search_sentences(args)
-
-    if args.json:
-        print(_format_json(raw))
+    
+    # If no arguments, show help
+    if not any([args.search, args.library, args.status, args.pdfs, args.all]):
+        parser.print_help()
         return
-
-    _print_sentence_hits(raw, show_bibtex=args.bibtex)
+    
+    # Initialize server
+    print("Initializing MCP server...")
+    config = Config()
+    server = MCPZoteroServer(config)
+    
+    # Run requested operations
+    try:
+        if args.all or args.library:
+            await run_library_items(server, limit=args.limit)
+            
+        if args.all or args.status:
+            await run_embedding_status(server)
+            
+        if args.all or args.pdfs:
+            await run_documents_with_pdfs(server)
+            
+        if args.search:
+            results = await run_search(server, args.search)
+            
+            if args.json and results:
+                print("\n--- JSON Output ---")
+                print(format_json(results))
+                
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user.")
+    except Exception as e:
+        print(f"\nError: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # Cleanup
+    server.shutdown()
 
 
 if __name__ == "__main__":

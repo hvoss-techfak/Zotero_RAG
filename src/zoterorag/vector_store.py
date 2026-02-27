@@ -133,19 +133,9 @@ class VectorStore:
         self,
         sections: List[Section],
         embeddings: List[List[float]],
-        document_key: str,
-        zotero_key: str | None = None,
-        parent_item_key: str | None = None,
+        document_key: str
     ):
-        """Add section embeddings to the store.
-
-        Args:
-            sections: extracted sections
-            embeddings: embeddings corresponding to sections
-            document_key: vector-store document key (currently PDF stem)
-            zotero_key: Zotero attachment item key (PDF item key)
-            parent_item_key: Zotero parent bibliographic item key (if known)
-        """
+        """Add section embeddings to the store."""
         if not sections or not embeddings:
             return
 
@@ -154,8 +144,6 @@ class VectorStore:
         metadatas = [
             {
                 "document_key": document_key,
-                "zotero_key": zotero_key or "",
-                "parent_item_key": parent_item_key or "",
                 "title": s.title,
                 "level": str(s.level),
                 "start_page": s.start_page,
@@ -168,7 +156,7 @@ class VectorStore:
             ids=ids,
             documents=documents,
             embeddings=embeddings,
-            metadatas=metadatas,
+            metadatas=metadatas
         )
 
     def get_section(self, section_id: str) -> Optional[Section]:
@@ -255,19 +243,9 @@ class VectorStore:
         self,
         windows: List[SentenceWindow],
         embeddings: List[List[float]],
-        document_key: str,
-        zotero_key: str | None = None,
-        parent_item_key: str | None = None,
+        document_key: str
     ):
-        """Add sentence window embeddings.
-
-        Args:
-            windows: sentence windows
-            embeddings: embeddings for windows
-            document_key: vector-store document key (currently PDF stem)
-            zotero_key: Zotero attachment item key (PDF item key)
-            parent_item_key: Zotero parent bibliographic item key (if known)
-        """
+        """Add sentence window embeddings to the store."""
         if not windows or not embeddings:
             return
 
@@ -276,10 +254,8 @@ class VectorStore:
         metadatas = [
             {
                 "document_key": document_key,
-                "zotero_key": zotero_key or "",
-                "parent_item_key": parent_item_key or "",
                 "section_id": w.section_id,
-                "window_index": w.window_index,
+                "window_index": str(w.window_index),
             }
             for w in windows
         ]
@@ -288,27 +264,66 @@ class VectorStore:
             ids=ids,
             documents=documents,
             embeddings=embeddings,
-            metadatas=metadatas,
+            metadatas=metadatas
         )
 
-    def get_document_zotero_keys(self, document_key: str) -> dict[str, str]:
-        """Return stored zotero_key/parent_item_key for a document_key, if present.
+    def get_sentence_windows(self, section_id: str) -> List[SentenceWindow]:
+        """Get all sentence windows for a section."""
+        result = self.sentences_collection.get(
+            where={"section_id": section_id}
+        )
+        if not result["ids"]:
+            return []
 
-        This enables mapping from vector-store document_key (often a PDF stem) to a
-        Zotero attachment key + parent key for bibliographic metadata.
-        """
-        result = self.sections_collection.get(
+        windows = []
+        for i, wid in enumerate(result["ids"]):
+            meta = result["metadatas"][i]
+            windows.append(SentenceWindow(
+                id=wid,
+                text=result["documents"][i],
+                section_id=section_id,
+                window_index=int(meta.get("window_index", 0))
+            ))
+        return windows
+
+    def search_sentences(
+        self,
+        query_embedding: List[float],
+        document_key: str,
+        top_k: int = 10
+    ) -> tuple[List[str], List[List[float]]]:
+        """Search sentence windows within a document."""
+        results = self.sentences_collection.query(
+            query_embeddings=[query_embedding],
+            n_results=top_k,
             where={"document_key": document_key},
-            limit=1,
-            include=["metadatas"],
+            include=["embeddings", "metadatas", "documents"]
         )
-        if result and result.get("metadatas"):
-            meta = result["metadatas"][0] or {}
-            return {
-                "zotero_key": meta.get("zotero_key", "") or "",
-                "parent_item_key": meta.get("parent_item_key", "") or "",
-            }
-        return {"zotero_key": "", "parent_item_key": ""}
+
+        if not results or not results.get("ids") or not results["ids"][0]:
+            return [], []
+
+        ids = results["ids"][0]
+        # Handle None embeddings (can happen with dimension mismatches)
+        raw_embeddings = results.get("embeddings")
+        if raw_embeddings is None:
+            embeddings = []
+        elif isinstance(raw_embeddings, list) and len(raw_embeddings) > 0:
+            first_emb = raw_embeddings[0]
+            if first_emb is not None:
+                # Convert numpy arrays to lists for compatibility
+                import numpy as np
+                if hasattr(first_emb, 'tolist'):
+                    embeddings = [e.tolist() if hasattr(e, 'tolist') else e for e in first_emb]
+                elif isinstance(first_emb, list):
+                    embeddings = first_emb
+                else:
+                    embeddings = []
+            else:
+                embeddings = []
+        else:
+            embeddings = []
+        return ids, embeddings
 
     # --- Cleanup ---
 
