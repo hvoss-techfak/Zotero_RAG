@@ -82,7 +82,8 @@ class MCPZoteroServer:
         query: str,
         document_key: Optional[str] = None,
         top_sections: int = 5,
-        top_sentences_per_section: int = 3
+        top_sentences_per_section: int = 3,
+        min_relevance: float = 0.8,
     ) -> list[dict]:
         """Search across embedded documents using two-stage RAG.
         
@@ -150,8 +151,16 @@ class MCPZoteroServer:
                 result_dict["document_title"] = f"Document containing: {result_dict['section_title'][:50]}"
             
             enriched_results.append(result_dict)
+
+        ret = []
+        # Remove results below threshold:
+        for r in enriched_results:
+            if r.get("relevance_score", 0) >= min_relevance:
+                ret.append(r)
+            else:
+                print(f"[DEBUG] Filtering out result with relevance {r.get('relevance_score', 0)} below threshold {min_relevance}")
         
-        return enriched_results
+        return ret
 
     async def get_library_items(self, limit: int = 25) -> list[dict]:
         """Get items from Zotero library."""
@@ -344,6 +353,7 @@ async def search_documents(
     document_key: Optional[str] = None,
     top_sections: int = 5,
     top_sentences_per_section: int = 3,
+    min_relevance: float = 0.8,
 ) -> list[dict]:
     """Search across embedded documents using two-stage RAG."""
     return await get_server().search_documents(
@@ -351,6 +361,7 @@ async def search_documents(
         document_key=document_key,
         top_sections=top_sections,
         top_sentences_per_section=top_sentences_per_section,
+        min_relevance=min_relevance
     )
 
 

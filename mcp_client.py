@@ -20,6 +20,42 @@ from fastmcp import Client  # type: ignore
 from fastmcp.client.transports.stdio import PythonStdioTransport  # type: ignore
 
 
+def extract_tool_result(result) -> list | dict | None:
+    """Extract actual data from FastMCP CallToolResult.
+    
+    FastMCP's call_tool() returns a CallToolResult object with content
+    wrapped in TextContent. This helper extracts the actual data.
+    
+    Args:
+        result: The CallToolResult from call_tool()
+        
+    Returns:
+        Parsed list/dict from the tool, or None if empty/error
+    """
+    # Check for error results
+    if hasattr(result, 'is_error') and result.is_error:
+        return None
+    
+    # Extract content - can be in multiple forms
+    if hasattr(result, 'content') and result.content:
+        text_content = result.content[0]
+        
+        # If it's a TextContent with JSON string, parse it
+        if hasattr(text_content, 'text'):
+            try:
+                parsed = json.loads(text_content.text)
+                return parsed
+            except (json.JSONDecodeError, TypeError):
+                # Not JSON, return as-is or handle differently
+                return text_content.text
+        
+        # If it's already a dict/list (structured content)
+        if hasattr(text_content, 'data'):
+            return text_content.data
+    
+    return None
+
+
 def format_json(data: dict | list) -> str:
     """Format data as pretty JSON."""
     return json.dumps(data, indent=2, ensure_ascii=False)
@@ -37,10 +73,16 @@ async def run_library_items(client: Client, limit: int = 10):
     print_section("Library Items")
 
     try:
-        items = await client.call_tool("get_library_items", {"limit": limit})
+        result = await client.call_tool("get_library_items", {"limit": limit})
+        items = extract_tool_result(result)
 
         if not items:
             print("No items found in library.")
+            return
+
+        # Ensure items is a list
+        if not isinstance(items, list):
+            print(f"Unexpected result type: {type(items)}")
             return
 
         for i, item in enumerate(items, 1):
@@ -66,7 +108,7 @@ async def run_search(client: Client, query: str):
     print_section(f"Search Results for: '{query}'")
 
     try:
-        results = await client.call_tool(
+        result = await client.call_tool(
             "search_documents",
             {
                 "query": query,
@@ -75,8 +117,16 @@ async def run_search(client: Client, query: str):
             },
         )
 
+        results = extract_tool_result(result)
+
         if not results:
             print("No results found.")
+            return
+
+        # Ensure results is a list
+        if not isinstance(results, list):
+            print(f"Unexpected result type: {type(results)}")
+            print(f"Raw result: {result}")
             return
 
         print(f"Found {len(results)} result(s):\n")
@@ -134,7 +184,12 @@ async def run_embedding_status(client: Client):
     print_section("Embedding Status")
 
     try:
-        status = await client.call_tool("get_embedding_status", {})
+        result = await client.call_tool("get_embedding_status", {})
+        status = extract_tool_result(result)
+
+        if not status or not isinstance(status, dict):
+            print(f"Unexpected result type: {type(status)}")
+            return
 
         # Format as nice output
         total_sections = status.get('total_sections', 0)
@@ -161,10 +216,16 @@ async def run_documents_with_pdfs(client: Client):
     print_section("Documents with PDFs")
 
     try:
-        docs = await client.call_tool("get_documents_with_pdfs", {})
+        result = await client.call_tool("get_documents_with_pdfs", {})
+        docs = extract_tool_result(result)
 
         if not docs:
             print("No documents with PDFs found.")
+            return
+
+        # Ensure docs is a list
+        if not isinstance(docs, list):
+            print(f"Unexpected result type: {type(docs)}")
             return
 
         for doc in docs:

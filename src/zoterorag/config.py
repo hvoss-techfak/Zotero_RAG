@@ -19,7 +19,7 @@ class Config:
     
     # Embedding dimensions: 0 means auto-detect from Ollama model
     # Set explicitly if your model produces non-standard dimensions
-    EMBEDDING_DIMENSIONS: int = int(os.getenv("EMBEDDING_DIMENSIONS", "512"))
+    EMBEDDING_DIMENSIONS: int = int(os.getenv("EMBEDDING_DIMENSIONS", "128"))
 
     # Search parameters
     DEFAULT_TOP_X: int = 10  # Sections to retrieve in stage 1
@@ -33,7 +33,7 @@ class Config:
     AUTO_EMBED_SENTENCES: bool = os.getenv("AUTO_EMBED_SENTENCES", "false").lower() == "true"
 
     # Threading for embedding
-    MAX_EMBEDDING_WORKERS: int = int(os.getenv("MAX_EMBEDDING_WORKERS", os.cpu_count()//2))
+    MAX_EMBEDDING_WORKERS: int = int(os.getenv("MAX_EMBEDDING_WORKERS", 4))
 
     # Batch embedding settings
     BATCH_EMBEDDING_SIZE: int = int(os.getenv("BATCH_EMBEDDING_SIZE", "512"))  # Number of texts to embed in one batch call

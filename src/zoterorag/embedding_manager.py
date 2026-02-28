@@ -225,53 +225,6 @@ class EmbeddingManager:
         
         return (magnitude + positive_ratio) / 2
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
-    def _rerank(self, query: str, candidates: List[str]) -> List[float]:
-        """Rerank candidates using Ollama reranker model.
-        
-        Uses the cross-encoder approach where we create a combined prompt
-        (query + document) for each candidate and get embeddings from the
-        reranker model. The embedding magnitude indicates relevance.
-        
-        Args:
-            query: The search query
-            candidates: List of document/candidate texts to rerank
-            
-        Returns:
-            List of relevance scores, one per candidate
-        """
-        if not candidates:
-            return []
-        
-        # Get options for the reranker model
-        opts = {"num_ctx": 32768}
-        if self.config.EMBEDDING_DIMENSIONS > 0:
-            opts["dimensions"] = self.config.EMBEDDING_DIMENSIONS
-        
-        scores: List[float] = []
-        
-        for candidate in candidates:
-            # Create combined prompt for cross-encoder style scoring
-            rerank_prompt = f"Query: {query}\n\nDocument: {candidate}\n\nRelevance:"
-            
-            try:
-                response = ollama.embeddings(
-                    model=self.config.RERANKER_MODEL,
-                    prompt=rerank_prompt,
-                    options=opts
-                )
-                
-                embedding = response.get("embedding", [])
-                score = self.calculate_relevance_score(embedding)
-                scores.append(score)
-                
-            except Exception as e:
-                logger.warning(f"Reranking failed for candidate, using fallback: {e}")
-                # Fallback to neutral score on error
-                scores.append(0.5)
-        
-        return scores
-
     def process_document(
         self,
         document: Document,

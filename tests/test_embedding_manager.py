@@ -368,52 +368,6 @@ class TestEmbeddingManager:
         
         assert result == 0.0
 
-    # --- Test _rerank ---
-
-    @patch("zoterorag.embedding_manager.ollama")
-    def test_rerank_returns_scores_for_all_candidates(self, mock_ollama, embedding_manager):
-        """Test that rerank returns a score for each candidate."""
-        # Mock the calculate_relevance_score to return predictable values
-        with patch.object(embedding_manager, 'calculate_relevance_score', return_value=0.8):
-            mock_response = {"embedding": [0.1] * 384}
-            mock_ollama.embeddings.return_value = mock_response
-            
-            candidates = ["doc1", "doc2", "doc3"]
-            result = embedding_manager._rerank("query", candidates)
-            
-            assert len(result) == 3
-            assert all(isinstance(s, float) for s in result)
-
-    def test_rerank_with_empty_candidates(self, embedding_manager):
-        """Test that rerank handles empty candidate list."""
-        result = embedding_manager._rerank("query", [])
-        
-        assert result == []
-
-    @patch("zoterorag.embedding_manager.ollama")
-    def test_rerank_handles_error_gracefully(self, mock_ollama, embedding_manager):
-        """Test that rerank handles errors and returns fallback scores."""
-        mock_ollama.embeddings.side_effect = Exception("Ollama error")
-        
-        candidates = ["doc1", "doc2"]
-        result = embedding_manager._rerank("query", candidates)
-        
-        # Should return fallback 0.5 for each failed candidate
-        assert len(result) == 2
-        assert all(s == 0.5 for s in result)
-
-    @patch("zoterorag.embedding_manager.ollama")
-    def test_rerank_uses_reranker_model(self, mock_ollama, embedding_manager):
-        """Test that rerank uses the configured reranker model."""
-        with patch.object(embedding_manager, 'calculate_relevance_score', return_value=0.5):
-            mock_response = {"embedding": [0.1] * 384}
-            mock_ollama.embeddings.return_value = mock_response
-            
-            embedding_manager._rerank("query", ["doc1"])
-            
-            call_args = mock_ollama.embeddings.call_args
-            assert "model" in call_args[1]
-            assert call_args[1]["model"] == embedding_manager.config.RERANKER_MODEL
 
     # --- Test process_document ---
 
