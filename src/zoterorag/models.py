@@ -7,6 +7,7 @@ from pathlib import Path
 @dataclass
 class Document:
     """Represents a document from Zotero."""
+
     zotero_key: str
     title: str
     authors: list[str] = field(default_factory=list)
@@ -21,30 +22,19 @@ class Document:
 
 
 @dataclass
-class Section:
-    """Represents a section within a document."""
-    id: str  # composite: doc_key + "_" + section_index
+class Sentence:
+    """Represents a single sentence chunk embedded for retrieval.
+
+    This replaces the previous section/window hierarchy: the smallest retrieval unit
+    is now a single sentence.
+    """
+
+    id: str  # composite: doc_key + "_sent_" + sentence_index
     document_id: str
-    title: str
-    level: int  # heading depth (1 = h1, 2 = h2, etc.)
-    start_page: int
-    end_page: int
+    page: int
+    page_section: int | None  # Position within page when using page splitting (1-N)
+    sentence_index: int
     text: str
-    is_embedded: bool = False
-    page_section: int | None = None  # Position within page when using line-count splitting (1-N)
-
-    def __hash__(self) -> int:
-        return hash(self.id)
-
-
-@dataclass
-class SentenceWindow:
-    """Represents a sliding window of 3 consecutive sentences within a section."""
-    id: str  # composite: section_id + "_" + window_index
-    section_id: str
-    window_index: int
-    sentences: list[str] = field(default_factory=list)  # 3 consecutive sentences
-    text: str = ""  # combined text of all sentences
     is_embedded: bool = False
 
     def __hash__(self) -> int:
@@ -54,6 +44,7 @@ class SentenceWindow:
 @dataclass
 class SearchResult:
     """Represents a search result with source attribution."""
+
     text: str
     document_title: str
     section_title: str
@@ -86,19 +77,25 @@ class SearchResult:
 @dataclass
 class EmbeddingStatus:
     """Represents the current embedding status."""
+
     total_documents: int = 0
     processed_documents: int = 0
     embedded_sections: int = 0
     embedded_sentences: int = 0
     pending_sections: int = 0
     is_running: bool = False
-    
+
     @property
     def progress_percentage(self) -> float:
         """Calculate progress percentage (0-100)."""
+
         if self.total_documents == 0:
             return 0.0
         return (self.processed_documents / self.total_documents) * 100
-    
+
     def __str__(self) -> str:
-        return f"Progress: {self.processed_documents}/{self.total_documents} ({self.progress_percentage:.1f}%) - Sections: {self.embedded_sections}, Sentences: {self.embedded_sentences}"
+        return (
+            f"Progress: {self.processed_documents}/{self.total_documents} "
+            f"({self.progress_percentage:.1f}%) - Sections: {self.embedded_sections}, "
+            f"Sentences: {self.embedded_sentences}"
+        )

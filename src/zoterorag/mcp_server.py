@@ -81,9 +81,8 @@ class MCPZoteroServer:
         self,
         query: str,
         document_key: Optional[str] = None,
-        top_sections: int = 5,
-        top_sentences_per_section: int = 3,
-        min_relevance: float = 0.8,
+        top_sentences: int = 10,
+        min_relevance: float = 0.75,
     ) -> list[dict]:
         """Search across embedded documents using two-stage RAG.
         
@@ -94,8 +93,7 @@ class MCPZoteroServer:
         results = self.search_engine.search(
             query=query,
             document_key=document_key,
-            top_sections=top_sections,
-            top_sentences_per_section=top_sentences_per_section
+            top_sentences=top_sentences,
         )
         
         print(f"[DEBUG] Got {len(results)} search results")
@@ -351,16 +349,15 @@ def get_server() -> MCPZoteroServer:
 async def search_documents(
     query: str,
     document_key: Optional[str] = None,
-    top_sections: int = 5,
-    top_sentences_per_section: int = 3,
-    min_relevance: float = 0.8,
+    top_sentences: int = 10,
+    min_relevance: float = 0.75,
 ) -> list[dict]:
+    print(f"[DEBUG] MCP tool search_documents called with query: {query}")
     """Search across embedded documents using two-stage RAG."""
     return await get_server().search_documents(
         query=query,
         document_key=document_key,
-        top_sections=top_sections,
-        top_sentences_per_section=top_sentences_per_section,
+        top_sentences=top_sentences,
         min_relevance=min_relevance
     )
 

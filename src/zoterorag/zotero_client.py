@@ -620,7 +620,10 @@ class ZoteroClient:
                 if not items:
                     break
                 for item in items:
-                    doc = self.parse_item_to_document(item, group_id=group_id)
+                    try:
+                        doc = self.parse_item_to_document(item, group_id=group_id)
+                    except StopIteration:
+                        return
                     if doc:
                         yield doc
                 start += limit

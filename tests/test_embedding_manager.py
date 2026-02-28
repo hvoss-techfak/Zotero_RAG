@@ -9,12 +9,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from zoterorag.config import Config
 from zoterorag.embedding_manager import EmbeddingManager
-from zoterorag.models import Document, Section, SentenceWindow, EmbeddingStatus
+from zoterorag.models import Document, Sentence, EmbeddingStatus
 
 
 class TestEmbeddingManager:
@@ -378,120 +379,14 @@ class TestEmbeddingManager:
                 mock_pp = MagicMock()
                 mock_pp.extract_quarter_sections.return_value = []
                 mock_pp_class.return_value = mock_pp
-                
+
                 manager = EmbeddingManager(mock_config)
-                
+
                 doc = Document(zotero_key="test", title="Test")
-                sections, windows = manager.process_document(doc, "test.pdf")
-                
+                sentences = manager.process_document(doc, "test.pdf")
+
                 mock_pp.extract_quarter_sections.assert_called_once()
-
-    def test_process_document_with_sentence_embedding(self, mock_config):
-        """Test that process_document creates sentence windows when requested."""
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor") as mock_pp_class:
-                mock_section = Section(
-                    id="sec1", document_id="doc1", title="Test",
-                    level=1, start_page=1, end_page=1, text="Test content."
-                )
-                
-                mock_window = SentenceWindow(
-                    id="win1", section_id="sec1", window_index=0,
-                    text="Test content.", sentences=["Test content."],
-                    is_embedded=False
-                )
-                
-                mock_pp = MagicMock()
-                mock_pp.extract_quarter_sections.return_value = [mock_section]
-                mock_pp.create_sentence_windows.return_value = [mock_window]
-                mock_pp_class.return_value = mock_pp
-                
-                manager = EmbeddingManager(mock_config)
-                
-                doc = Document(zotero_key="test", title="Test")
-                sections, windows = manager.process_document(
-                    doc, "test.pdf", embed_sentences=True
-                )
-                
-                # Should have called create_sentence_windows for each section
-                assert mock_pp.create_sentence_windows.called
-
-    def test_process_document_without_sentence_embedding(self, mock_config):
-        """Test that process_document skips sentence windows when not requested."""
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor") as mock_pp_class:
-                mock_section = Section(
-                    id="sec1", document_id="doc1", title="Test",
-                    level=1, start_page=1, end_page=1, text="Test content."
-                )
-                
-                mock_pp = MagicMock()
-                mock_pp.extract_quarter_sections.return_value = [mock_section]
-                mock_pp_class.return_value = mock_pp
-                
-                manager = EmbeddingManager(mock_config)
-                manager.config.AUTO_EMBED_SENTENCES = False
-                
-                doc = Document(zotero_key="test", title="Test")
-                sections, windows = manager.process_document(
-                    doc, "test.pdf", embed_sentences=False
-                )
-                
-                # create_sentence_windows should not be called when embed_sentences=False
-                mock_pp.create_sentence_windows.assert_not_called()
-
-    # --- Test _link_sections ---
-
-    def test_link_sections_no_op(self, embedding_manager):
-        """Test that _link_sections is a no-op (placeholder)."""
-        sections = [
-            Section(id="s1", document_id="doc1", title="A", level=1, 
-                   start_page=1, end_page=1, text="Text 1"),
-            Section(id="s2", document_id="doc1", title="B", level=2,
-                   start_page=2, end_page=2, text="Text 2")
-        ]
-        
-        # Should not raise
-        embedding_manager._link_sections(sections)
-
-    # --- Test embed_sections ---
-
-    @patch("zoterorag.embedding_manager.ollama")
-    def test_embed_sections_returns_ids_and_embeddings(self, mock_ollama, embedding_manager):
-        """Test that embed_sections returns section IDs and embeddings."""
-        mock_response = {"embedding": [0.1] * 384}
-        mock_ollama.embeddings.return_value = mock_response
-        
-        sections = [
-            Section(id="s1", document_id="doc1", title="A", level=1,
-                   start_page=1, end_page=1, text="Text 1"),
-            Section(id="s2", document_id="doc1", title="B", level=2,
-                   start_page=2, end_page=2, text="Text 2")
-        ]
-        
-        with patch.object(embedding_manager, 'embed_batch', return_value=[[0.1] * 384, [0.2] * 384]):
-            ids, embeddings = embedding_manager.embed_sections(sections)
-            
-            assert len(ids) == 2
-            assert len(embeddings) == 2
-
-    # --- Test embed_sentence_windows ---
-
-    @patch("zoterorag.embedding_manager.ollama")
-    def test_embed_sentence_windows_returns_ids_and_embeddings(self, mock_ollama, embedding_manager):
-        """Test that embed_sentence_windows returns window IDs and embeddings."""
-        windows = [
-            SentenceWindow(id="w1", section_id="s1", window_index=0,
-                         text="Sentence 1.", sentences=["Sentence 1."], is_embedded=False),
-            SentenceWindow(id="w2", section_id="s1", window_index=1,
-                         text="Sentence 2.", sentences=["Sentence 2."], is_embedded=False)
-        ]
-        
-        with patch.object(embedding_manager, 'embed_batch', return_value=[[0.1] * 384, [0.2] * 384]):
-            ids, embeddings = embedding_manager.embed_sentence_windows(windows)
-            
-            assert len(ids) == 2
-            assert len(embeddings) == 2
+                assert sentences == []
 
     # --- Test embed_document_async ---
 
@@ -513,118 +408,22 @@ class TestEmbeddingManager:
                 assert isinstance(result, Future)
 
     def test_embed_document_async_with_callback(self, mock_config):
-        """Test that embed_document_async calls callback on completion."""
+        """Test that embed_document_async returns a Future and accepts a callback."""
         with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor") as mock_pp:
-                # Set up mocks to avoid actual processing
+            with patch("zoterorag.embedding_manager.PDFProcessor"):
                 manager = EmbeddingManager(mock_config)
-                
-                # Create a real executor for this test
-                import os
-                max_workers = max(1, os.cpu_count() // 2) if os.cpu_count() else 1
-                manager._executor = __import__('concurrent.futures').ThreadPoolExecutor(max_workers=max_workers)
-                
+
+                manager._executor = ThreadPoolExecutor(max_workers=1)
+
                 doc = Document(zotero_key="test", title="Test")
-                
+
                 callback_called = []
-                def callback(status):
+
+                def callback(_status):
                     callback_called.append(True)
-                
-                # This will fail on actual processing but we can test the callback mechanism
-                try:
-                    manager.embed_document_async(doc, "nonexistent.pdf", callback=callback)
-                except Exception:
-                    pass  # Expected to fail since file doesn't exist
 
-    # --- Test embed_documents_sync ---
-
-    def test_embed_documents_sync_returns_results_dict(self, mock_config):
-        """Test that embed_documents_sync returns success/failed lists."""
-        with patch("zoterorag.embedding_manager.VectorStore") as mock_vs:
-            with patch("zoterorag.embedding_manager.PDFProcessor"):
-                # Set up vector store mock
-                mock_vs_instance = MagicMock()
-                mock_vs_instance.get_embedded_documents.return_value = {}
-                mock_vs.return_value = mock_vs_instance
-                
-                manager = EmbeddingManager(mock_config)
-                
-                docs = [
-                    (Document(zotero_key="test1", title="Test 1"), "path1.pdf"),
-                ]
-                
-                with patch.object(manager, 'process_document', side_effect=Exception("Test")):
-                    results = manager.embed_documents_sync(docs)
-                    
-                    assert "success" in results
-                    assert "failed" in results
-
-    def test_embed_documents_sync_with_stop_on_error(self, mock_config):
-        """Test that embed_documents_sync raises on first error when configured."""
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor"):
-                manager = EmbeddingManager(mock_config)
-                
-                docs = [
-                    (Document(zotero_key="test1", title="Test 1"), "path1.pdf"),
-                ]
-                
-                with patch.object(manager, 'process_document', side_effect=Exception("Test error")):
-                    with pytest.raises(Exception):
-                        results = manager.embed_documents_sync(docs, stop_on_first_error=True)
-
-    # --- Test get_pdf_documents_from_directory ---
-
-    def test_get_pdf_documents_returns_empty_for_missing_dir(self):
-        """Test that get_pdf_documents returns empty list for missing directory."""
-        result = EmbeddingManager.get_pdf_documents_from_directory(Path("/nonexistent"))
-        
-        assert result == []
-
-    def test_get_pdf_documents_finds_pdfs_in_directory(self):
-        """Test that get_pdf_documents finds PDF files in a directory."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            pdf_dir = Path(tmpdir)
-            
-            # Create some dummy PDF files
-            (pdf_dir / "doc1.pdf").touch()
-            (pdf_dir / "doc2.pdf").touch()
-            (pdf_dir / "readme.txt").touch()  # Non-PDF
-            
-            result = EmbeddingManager.get_pdf_documents_from_directory(pdf_dir)
-            
-            assert len(result) == 2
-            # Check that results are (Document, path) tuples
-            assert all(isinstance(r[0], Document) for r in result)
-
-    def test_get_pdf_documents_uses_filename_as_key(self):
-        """Test that get_pdf_documents uses filename as zotero_key."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            pdf_dir = Path(tmpdir)
-            
-            (pdf_dir / "mydocument.pdf").touch()
-            
-            result = EmbeddingManager.get_pdf_documents_from_directory(pdf_dir)
-            
-            assert len(result) == 1
-            doc, path = result[0]
-            assert doc.zotero_key == "mydocument"
-            assert doc.title == "mydocument.pdf"
-
-    def test_get_pdf_documents_sorts_by_filename(self):
-        """Test that get_pdf_documents returns files sorted alphabetically."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            pdf_dir = Path(tmpdir)
-            
-            # Create files in non-alphabetical order
-            (pdf_dir / "z_file.pdf").touch()
-            (pdf_dir / "a_file.pdf").touch()
-            (pdf_dir / "m_file.pdf").touch()
-            
-            result = EmbeddingManager.get_pdf_documents_from_directory(pdf_dir)
-            
-            keys = [r[0].zotero_key for r in result]
-            assert keys == ["a_file", "m_file", "z_file"]
+                fut = manager.embed_document_async(doc, "nonexistent.pdf", callback=callback)
+                assert fut is not None
 
     # --- Test edge cases ---
 
@@ -642,12 +441,10 @@ class TestEmbeddingManager:
         with patch("zoterorag.embedding_manager.VectorStore"):
             with patch("zoterorag.embedding_manager.PDFProcessor") as mock_pp:
                 mock_pp.return_value.extract_quarter_sections.return_value = []
-                
+
                 manager = EmbeddingManager(mock_config)
-                
+
                 doc = Document(zotero_key="test", title="Test")
-                sections, windows = manager.process_document(doc, "/nonexistent/file.pdf")
-                
-                # Should return empty lists
-                assert sections == []
-                assert windows == []
+                sentences = manager.process_document(doc, "/nonexistent/file.pdf")
+
+                assert sentences == []

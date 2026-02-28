@@ -208,10 +208,9 @@ class ZoteroRAGApplication:
         status = self.embedding_manager.get_embedding_status()
         if status.total_documents > 0:
             logger.info(
-                "[AutoEmbed] Progress %s/%s docs | +%s sections | +%s sentences | running=%s",
+                "[AutoEmbed] Progress %s/%s docs | +%s sentences | running=%s",
                 status.processed_documents,
                 status.total_documents,
-                status.embedded_sections,
                 status.embedded_sentences,
                 status.is_running,
             )

@@ -117,8 +117,7 @@ async def run_search(client: Client, query: str):
             "search_documents",
             {
                 "query": query,
-                "top_sections": 10,
-                "top_sentences_per_section": 10,
+                "top_sentences": 10,
             },
         )
 

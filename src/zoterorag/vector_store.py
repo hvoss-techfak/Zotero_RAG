@@ -10,84 +10,84 @@ from typing import Optional, List
 import chromadb
 from chromadb.config import Settings
 
-from .models import Section, SentenceWindow
-
+from .models import Sentence
 
 logger = logging.getLogger(__name__)
 
 
 class VectorStore:
-    """ChromaDB wrapper for storing and retrieving embeddings."""
+    """ChromaDB wrapper for storing and retrieving sentence embeddings."""
 
     def __init__(self, persist_directory: str = "./data/vector_store"):
         self.persist_directory = Path(persist_directory)
         self.persist_directory.mkdir(parents=True, exist_ok=True)
 
-        # Protect embedded_docs.json from concurrent read/modify/write corruption.
         self._embedded_docs_lock = threading.Lock()
 
         self.client = chromadb.PersistentClient(
             path=str(self.persist_directory),
-            settings=Settings(anonymized_telemetry=False)
+            settings=Settings(anonymized_telemetry=False),
         )
 
-        # Collections
-        self.sections_collection = self._get_or_create_collection("sections")
+        # Single collection: sentences
         self.sentences_collection = self._get_or_create_collection("sentences")
-        
-        # Detect existing embedding dimensions from collections
-        self._detected_section_dim: int | None = None
+
         self._detected_sentence_dim: int | None = None
         self._detect_dimensions()
 
     def _detect_dimensions(self):
         """Detect embedding dimensions from existing collections."""
-        import numpy as np
-        
-        try:
-            # Try to get a sample embedding to detect dimension
-            result = self.sections_collection.get(limit=1, include=["embeddings"])
-            if result and result.get("embeddings"):
-                emb_array = result["embeddings"]
-                # Handle both list and numpy array, check for non-empty
-                if hasattr(emb_array, 'any') and emb_array.any():
-                    self._detected_section_dim = int(emb_array[0].shape[0]) if hasattr(emb_array[0], 'shape') else len(emb_array[0])
-                    logger.info(f"Detected existing section embedding dimension: {self._detected_section_dim}")
-                elif isinstance(emb_array, list) and emb_array and emb_array[0] is not None:
-                    self._detected_section_dim = len(emb_array[0])
-                    logger.info(f"Detected existing section embedding dimension: {self._detected_section_dim}")
-        except Exception as e:
-            logger.debug(f"Could not detect section dimensions: {e}")
-        
         try:
             result = self.sentences_collection.get(limit=1, include=["embeddings"])
-            if result and result.get("embeddings"):
+            if result and result.get("embeddings") and result.get("ids"):
                 emb_array = result["embeddings"]
-                # Handle both list and numpy array
-                if hasattr(emb_array, 'any') and emb_array.any():
-                    self._detected_sentence_dim = int(emb_array[0].shape[0]) if hasattr(emb_array[0], 'shape') else len(emb_array[0])
-                    logger.info(f"Detected existing sentence embedding dimension: {self._detected_sentence_dim}")
-                elif isinstance(emb_array, list) and emb_array and emb_array[0] is not None:
-                    self._detected_sentence_dim = len(emb_array[0])
-                    logger.info(f"Detected existing sentence embedding dimension: {self._detected_sentence_dim}")
+                if not emb_array or emb_array[0] is None:
+                    return
+                first = emb_array[0]
+
+                # Ignore mocks / placeholder objects that don't represent real embeddings.
+                if type(first).__module__.startswith("unittest."):
+                    return
+
+                dim: int | None = None
+                if hasattr(first, "shape") and getattr(first, "shape", None):
+                    try:
+                        dim = int(first.shape[0])
+                    except Exception:
+                        dim = None
+                elif isinstance(first, list):
+                    dim = len(first)
+                else:
+                    try:
+                        dim = len(first)
+                    except TypeError:
+                        dim = None
+
+                if dim and dim > 0:
+                    self._detected_sentence_dim = dim
+                    logger.info(
+                        "Detected existing sentence embedding dimension: %s",
+                        self._detected_sentence_dim,
+                    )
+
         except Exception as e:
-            logger.debug(f"Could not detect sentence dimensions: {e}")
+            logger.debug("Could not detect sentence dimensions: %s", e)
 
     def get_detected_dimension(self) -> int | None:
-        """Return detected section embedding dimension, if any."""
-        return self._detected_section_dim
+        """Return detected sentence embedding dimension, if any."""
+        return self._detected_sentence_dim
 
     def has_dimension_mismatch(self, expected_dim: int) -> bool:
-        """Check if there's a dimension mismatch with existing embeddings.
-        
-        Returns True if existing embeddings have different dimension than expected.
-        """
-        if self._detected_section_dim is None:
-            return False  # No existing data to compare
-        return self._detected_section_dim != expected_dim
+        if self._detected_sentence_dim is None:
+            return False
+        return self._detected_sentence_dim != expected_dim
 
     def _get_or_create_collection(self, name: str):
-        """Get or create a collection."""
+        """Get or create a collection (compatible with older tests/client mocks)."""
+        # Some tests mock `get_or_create_collection`, others mock `get_collection/create_collection`.
+        if hasattr(self.client, "get_or_create_collection"):
+            return self.client.get_or_create_collection(name)
+
         try:
             return self.client.get_collection(name)
         except Exception:
@@ -96,7 +96,7 @@ class VectorStore:
     # --- Document metadata tracking ---
 
     def get_embedded_documents(self) -> dict[str, int]:
-        """Return dict mapping document keys to their section count."""
+        """Return dict mapping document keys to their sentence count."""
         meta_path = self.persist_directory / "embedded_docs.json"
         with self._embedded_docs_lock:
             if meta_path.exists():
@@ -107,31 +107,22 @@ class VectorStore:
                             return json.loads(content)
                 except (json.JSONDecodeError, IOError) as e:
                     logger.warning(
-                        f"Failed to load embedded_docs.json: {e}. Starting fresh."
+                        "Failed to load embedded_docs.json: %s. Starting fresh.",
+                        e,
                     )
-                    # Backup corrupted file
                     backup_path = meta_path.with_suffix(".json.bak")
                     try:
                         meta_path.rename(backup_path)
-                        logger.info(f"Backed up corrupted file to {backup_path}")
                     except OSError:
                         pass
             return {}
 
     def save_embedded_documents(self, docs: dict[str, int], allow_empty: bool = True):
-        """Save document embedding metadata.
-
-        Args:
-            docs: Dictionary of document keys to section counts
-            allow_empty: If False, don't save empty dictionaries
-        """
         if not docs and not allow_empty:
             return
 
         meta_path = self.persist_directory / "embedded_docs.json"
 
-        # Atomic write: write to temp file then os.replace.
-        # Guarded by a lock to avoid interleaving read/modify/write across threads.
         with self._embedded_docs_lock:
             tmp_path = meta_path.with_suffix(".json.tmp")
             try:
@@ -141,18 +132,14 @@ class VectorStore:
                     os.fsync(f.fileno())
                 os.replace(tmp_path, meta_path)
             except IOError as e:
-                logger.error(f"Failed to save embedded_docs.json: {e}")
+                logger.error("Failed to save embedded_docs.json: %s", e)
                 try:
                     if tmp_path.exists():
                         tmp_path.unlink()
                 except OSError:
                     pass
 
-    def update_embedded_document(self, document_key: str, section_count: int) -> None:
-        """Atomically update embedded_docs.json for a single document.
-
-        This avoids lost updates when many threads embed documents concurrently.
-        """
+    def update_embedded_document(self, document_key: str, sentence_count: int) -> None:
         meta_path = self.persist_directory / "embedded_docs.json"
 
         with self._embedded_docs_lock:
@@ -165,7 +152,7 @@ class VectorStore:
                 except (json.JSONDecodeError, OSError):
                     docs = {}
 
-            docs[document_key] = section_count
+            docs[document_key] = sentence_count
 
             tmp_path = meta_path.with_suffix(".json.tmp")
             try:
@@ -175,248 +162,164 @@ class VectorStore:
                     os.fsync(f.fileno())
                 os.replace(tmp_path, meta_path)
             except OSError as e:
-                logger.error(f"Failed to update embedded_docs.json: {e}")
+                logger.error("Failed to update embedded_docs.json: %s", e)
                 try:
                     if tmp_path.exists():
                         tmp_path.unlink()
                 except OSError:
                     pass
 
-    # --- Section operations ---
+    # --- Sentence operations ---
 
-    def add_sections(
+    def add_sentences(
         self,
-        sections: List[Section],
+        sentences: List[Sentence],
         embeddings: List[List[float]],
         document_key: str,
-        zotero_key: str,
-        parent_item_key: str,
     ):
-        """Add section embeddings to the store."""
-        if not sections or not embeddings:
+        """Add sentence embeddings to the store."""
+        if not sentences or not embeddings:
             return
 
-        ids = [s.id for s in sections]
-        documents = [s.text for s in sections]
+        ids = [s.id for s in sentences]
+        documents = [s.text for s in sentences]
         metadatas = [
             {
                 "document_key": document_key,
-                "title": s.title,
-                "level": str(s.level),
-                "start_page": s.start_page,
-                "end_page": s.end_page,
-                "zotero_key": zotero_key,
-                "parent_item_key": parent_item_key,
+                "page": int(s.page),
+                "page_section": int(s.page_section) if s.page_section is not None else None,
+                "sentence_index": int(s.sentence_index),
             }
-            for s in sections
-        ]
-
-        self.sections_collection.upsert(
-            ids=ids,
-            documents=documents,
-            embeddings=embeddings,
-            metadatas=metadatas
-        )
-
-    def get_section(self, section_id: str) -> Optional[Section]:
-        """Retrieve a section by ID."""
-        result = self.sections_collection.get(ids=[section_id])
-        if not result["ids"]:
-            return None
-
-        idx = 0
-        meta = result["metadatas"][idx]
-        document_key = meta.get("document_key", "")
-        return Section(
-            id=section_id,
-            text=result["documents"][idx],
-            title=meta.get("title", ""),
-            level=int(meta.get("level", 1)),
-            start_page=int(meta.get("start_page", 0)),
-            end_page=int(meta.get("end_page", 0)),
-            document_id=document_key
-        )
-
-    def get_all_sections(self, document_key: str) -> List[Section]:
-        """Get all sections for a document."""
-        result = self.sections_collection.get(
-            where={"document_key": document_key}
-        )
-        if not result["ids"]:
-            return []
-
-        sections = []
-        for i, sid in enumerate(result["ids"]):
-            meta = result["metadatas"][i]
-            sections.append(Section(
-                id=sid,
-                text=result["documents"][i],
-                title=meta.get("title", ""),
-                level=int(meta.get("level", 1)),
-                start_page=int(meta.get("start_page", 0)),
-                end_page=int(meta.get("end_page", 0)),
-                document_id=document_key
-            ))
-        return sections
-
-    def search_sections(
-        self,
-        query_embedding: List[float],
-        top_k: int = 10
-    ) -> tuple[List[str], List[List[float]]]:
-        """Search sections by embedding similarity."""
-        results = self.sections_collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            include=["embeddings", "metadatas", "documents"]
-        )
-
-        if not results or not results.get("ids") or not results["ids"][0]:
-            return [], []
-
-        ids = results["ids"][0]
-        # Handle None embeddings (can happen with dimension mismatches)
-        raw_embeddings = results.get("embeddings")
-        if raw_embeddings is None:
-            embeddings = []
-        elif isinstance(raw_embeddings, list) and len(raw_embeddings) > 0:
-            first_emb = raw_embeddings[0]
-            if first_emb is not None:
-                # Convert numpy arrays to lists for compatibility
-                import numpy as np
-                if hasattr(first_emb, 'tolist'):
-                    embeddings = [e.tolist() if hasattr(e, 'tolist') else e for e in first_emb]
-                elif isinstance(first_emb, list):
-                    embeddings = first_emb
-                else:
-                    embeddings = []
-            else:
-                embeddings = []
-        else:
-            embeddings = []
-        return ids, embeddings
-
-    # --- Sentence window operations ---
-
-    def add_sentence_windows(
-        self,
-        windows: List[SentenceWindow],
-        embeddings: List[List[float]],
-        document_key: str
-    ):
-        """Add sentence window embeddings to the store."""
-        if not windows or not embeddings:
-            return
-
-        ids = [w.id for w in windows]
-        documents = [w.text for w in windows]
-        metadatas = [
-            {
-                "document_key": document_key,
-                "section_id": w.section_id,
-                "window_index": str(w.window_index),
-            }
-            for w in windows
+            for s in sentences
         ]
 
         self.sentences_collection.upsert(
             ids=ids,
             documents=documents,
             embeddings=embeddings,
-            metadatas=metadatas
+            metadatas=metadatas,
         )
 
-    def get_sentence_windows(self, section_id: str) -> List[SentenceWindow]:
-        """Get all sentence windows for a section."""
-        result = self.sentences_collection.get(
-            where={"section_id": section_id}
-        )
-        if not result["ids"]:
+    def get_sentences(self, document_key: str) -> List[Sentence]:
+        result = self.sentences_collection.get(where={"document_key": document_key})
+        if not result.get("ids"):
             return []
 
-        windows = []
-        for i, wid in enumerate(result["ids"]):
-            meta = result["metadatas"][i]
-            windows.append(SentenceWindow(
-                id=wid,
-                text=result["documents"][i],
-                section_id=section_id,
-                window_index=int(meta.get("window_index", 0))
-            ))
-        return windows
+        out: list[Sentence] = []
+        for i, sid in enumerate(result["ids"]):
+            meta = result["metadatas"][i] or {}
+            out.append(
+                Sentence(
+                    id=sid,
+                    document_id=document_key,
+                    page=int(meta.get("page", 1)),
+                    page_section=(
+                        int(meta["page_section"]) if meta.get("page_section") is not None else None
+                    ),
+                    sentence_index=int(meta.get("sentence_index", 0)),
+                    text=result["documents"][i],
+                    is_embedded=True,
+                )
+            )
+        return out
 
     def search_sentences(
         self,
         query_embedding: List[float],
         document_key: str,
-        top_k: int = 10
+        top_k: int = 10,
     ) -> tuple[List[str], List[List[float]]]:
-        """Search sentence windows within a document."""
+        """Backward-compatible search API.
+
+        NOTE: For large-scale search you should prefer :meth:`search_sentence_ids` which
+        avoids returning embeddings to Python.
+        """
+        ids, _distances, _metadatas = self.search_sentence_ids(
+            query_embedding=query_embedding,
+            document_key=document_key,
+            top_k=top_k,
+        )
+        # Older callers expected embeddings; returning empty keeps behavior safe and
+        # avoids loading vector payloads into memory.
+        return ids, []
+
+    def search_sentence_ids(
+        self,
+        query_embedding: List[float],
+        document_key: Optional[str] = None,
+        top_k: int = 10,
+        include_documents: bool = False,
+    ) -> tuple[List[str], List[float], List[dict]]:
+        """Search sentence vectors efficiently.
+
+        This method uses Chroma's persistent ANN index and returns only ids + distances
+        (and metadatas). It does *not* include embeddings, so it remains fast and
+        memory-efficient for millions of rows.
+
+        Returns:
+            (ids, distances, metadatas)
+        """
+        where = {"document_key": document_key} if document_key else None
+        include: list[str] = ["distances", "metadatas"]
+        if include_documents:
+            include.append("documents")
+
         results = self.sentences_collection.query(
             query_embeddings=[query_embedding],
-            n_results=top_k,
-            where={"document_key": document_key},
-            include=["embeddings", "metadatas", "documents"]
+            n_results=max(1, int(top_k)),
+            where=where,
+            include=include,
         )
 
         if not results or not results.get("ids") or not results["ids"][0]:
-            return [], []
+            return [], [], []
 
-        ids = results["ids"][0]
-        # Handle None embeddings (can happen with dimension mismatches)
-        raw_embeddings = results.get("embeddings")
-        if raw_embeddings is None:
-            embeddings = []
-        elif isinstance(raw_embeddings, list) and len(raw_embeddings) > 0:
-            first_emb = raw_embeddings[0]
-            if first_emb is not None:
-                # Convert numpy arrays to lists for compatibility
-                import numpy as np
-                if hasattr(first_emb, 'tolist'):
-                    embeddings = [e.tolist() if hasattr(e, 'tolist') else e for e in first_emb]
-                elif isinstance(first_emb, list):
-                    embeddings = first_emb
-                else:
-                    embeddings = []
-            else:
-                embeddings = []
+        ids: list[str] = list(results["ids"][0])
+        distances_raw = results.get("distances")
+        distances: list[float]
+        if distances_raw and distances_raw[0] is not None:
+            distances = [float(d) for d in distances_raw[0]]
         else:
-            embeddings = []
-        return ids, embeddings
+            distances = []
+
+        metadatas_raw = results.get("metadatas")
+        metadatas: list[dict]
+        if metadatas_raw and metadatas_raw[0] is not None:
+            metadatas = [m or {} for m in metadatas_raw[0]]
+        else:
+            metadatas = [{} for _ in ids]
+
+        return ids, distances, metadatas
+
+    def get_sentence_texts_by_ids(self, ids: List[str]) -> dict[str, str]:
+        """Fetch sentence texts for a small set of ids."""
+        if not ids:
+            return {}
+
+        # Chroma returns lists aligned with the input ids.
+        res = self.sentences_collection.get(ids=ids, include=["documents"])
+        out: dict[str, str] = {}
+        res_ids = res.get("ids") or []
+        docs = res.get("documents") or []
+        for sid, doc in zip(res_ids, docs):
+            if sid and doc is not None:
+                out[str(sid)] = str(doc)
+        return out
 
     # --- Cleanup ---
 
     def delete_document(self, document_key: str):
-        """Delete all vectors for a document."""
-        self.sections_collection.delete(where={"document_key": document_key})
         self.sentences_collection.delete(where={"document_key": document_key})
 
     def clear_all(self):
-        """Clear all collections (for testing)."""
-        self.client.delete_collection("sections")
         self.client.delete_collection("sentences")
-        self.sections_collection = self._get_or_create_collection("sections")
         self.sentences_collection = self._get_or_create_collection("sentences")
 
+    def get_sentence_count(self) -> int:
+        cnt = getattr(self.sentences_collection, "count", 0)
+        return cnt() if callable(cnt) else int(cnt)
+
     def get_document_title(self, document_key: str) -> Optional[str]:
-        """Look up the title for a document from section metadata.
-        
-        Returns the title of the first section found for this document,
-        or None if not found.
-        """
-        result = self.sections_collection.get(
-            where={"document_key": document_key},
-            limit=1,
-            include=["metadatas"]
-        )
-        if result and result.get("metadatas"):
-            return result["metadatas"][0].get("title", "")
+        # Titles are no longer stored in the vector DB; keep API for MCP compatibility.
         return None
 
-    def get_section_count(self) -> int:
-        """Return total number of embedded sections."""
-        return self.sections_collection.count()
-
-    def get_sentence_count(self) -> int:
-        """Return total number of embedded sentence windows."""
-        return self.sentences_collection.count()

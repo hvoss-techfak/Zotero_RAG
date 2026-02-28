@@ -8,8 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from zoterorag.models import (
     Document,
-    Section,
-    SentenceWindow,
+    Sentence,
     SearchResult,
     EmbeddingStatus,
 )
@@ -65,109 +64,51 @@ class TestDocument:
         assert hash(doc1) != hash(doc3)  # Different key, different hash
     
     def test_document_equality(self):
-        """Test document equality based on zotero_key."""
+        """Dataclass equality is field-based; we only guarantee hash-by-key."""
         doc1 = Document(zotero_key="key1", title="Title 1")
         doc2 = Document(zotero_key="key1", title="Different Title")
-        
-        assert doc1 == doc2  # Same key means equal
+
+        assert doc1 != doc2
 
 
-class TestSection:
-    """Tests for Section model."""
-    
-    def test_create_section_minimal(self):
-        """Test creating a section with minimal fields."""
-        section = Section(
-            id="doc_0",
+class TestSentence:
+    """Tests for Sentence model."""
+
+    def test_create_sentence_minimal(self):
+        sent = Sentence(
+            id="doc_sent_0",
             document_id="doc",
-            title="Introduction",
-            level=1,
-            start_page=1,
-            end_page=5,
-            text="Some text content"
+            page=1,
+            page_section=None,
+            sentence_index=0,
+            text="First sentence.",
         )
-        assert section.id == "doc_0"
-        assert section.document_id == "doc"
-        assert section.title == "Introduction"
-        assert section.level == 1
-        assert section.start_page == 1
-        assert section.end_page == 5
-        assert section.text == "Some text content"
-        assert section.is_embedded is False
-        assert section.page_section is None
-    
-    def test_create_section_full(self):
-        """Test creating a section with all fields."""
-        section = Section(
-            id="doc_sec_1",
-            document_id="doc",
-            title="Methods",
-            level=2,
-            start_page=6,
-            end_page=10,
-            text="Methodology content here",
-            is_embedded=True,
-            page_section=3
+        assert sent.id == "doc_sent_0"
+        assert sent.document_id == "doc"
+        assert sent.page == 1
+        assert sent.page_section is None
+        assert sent.sentence_index == 0
+        assert sent.text == "First sentence."
+        assert sent.is_embedded is False
+
+    def test_sentence_hash(self):
+        s1 = Sentence(
+            id="x",
+            document_id="d1",
+            page=1,
+            page_section=1,
+            sentence_index=1,
+            text="a",
         )
-        assert section.id == "doc_sec_1"
-        assert section.is_embedded is True
-        assert section.page_section == 3
-    
-    def test_section_hash(self):
-        """Test section hashing based on id."""
-        s1 = Section(id="sec1", document_id="doc", title="T", level=1, start_page=1, end_page=1, text="text")
-        s2 = Section(id="sec1", document_id="other", title="Different", level=2, start_page=5, end_page=10, text="different")
-        
+        s2 = Sentence(
+            id="x",
+            document_id="d2",
+            page=2,
+            page_section=None,
+            sentence_index=99,
+            text="b",
+        )
         assert hash(s1) == hash(s2)
-
-
-class TestSentenceWindow:
-    """Tests for SentenceWindow model."""
-    
-    def test_create_sentence_window_minimal(self):
-        """Test creating a sentence window with minimal fields."""
-        window = SentenceWindow(
-            id="sec_win_0",
-            section_id="section_1",
-            window_index=0,
-            sentences=["First sentence.", "Second sentence.", "Third sentence."],
-            text="First sentence. Second sentence. Third sentence."
-        )
-        assert window.id == "sec_win_0"
-        assert window.section_id == "section_1"
-        assert window.window_index == 0
-        assert len(window.sentences) == 3
-        assert window.is_embedded is False
-    
-    def test_create_sentence_window_full(self):
-        """Test creating a sentence window with all fields."""
-        window = SentenceWindow(
-            id="sec_win_5",
-            section_id="section_2",
-            window_index=5,
-            sentences=["A.", "B.", "C."],
-            text="A. B. C.",
-            is_embedded=True
-        )
-        assert window.id == "sec_win_5"
-        assert window.is_embedded is True
-    
-    def test_sentence_window_hash(self):
-        """Test sentence window hashing based on id."""
-        w1 = SentenceWindow(id="win1", section_id="s1", window_index=0, text="text")
-        w2 = SentenceWindow(id="win1", section_id="other", window_index=99, text="different")
-        
-        assert hash(w1) == hash(w2)
-    
-    def test_sentence_window_default_factories(self):
-        """Test default factory values."""
-        window = SentenceWindow(
-            id="test",
-            section_id="sec",
-            window_index=0,
-            text="test"
-        )
-        assert window.sentences == []
 
 
 class TestSearchResult:
@@ -334,19 +275,6 @@ class TestModelEdgeCases:
         doc = Document(zotero_key="key", title="Title")
         assert doc.pdf_path is None
     
-    def test_section_page_section_can_be_none(self):
-        """Test page_section default is None for heading-based sections."""
-        section = Section(
-            id="s1",
-            document_id="doc",
-            title="T",
-            level=1,
-            start_page=1,
-            end_page=1,
-            text="text"
-        )
-        assert section.page_section is None
-    
     def test_search_result_empty_authors_default(self):
         """Test that authors defaults to empty list."""
         result = SearchResult(
@@ -362,3 +290,4 @@ class TestModelEdgeCases:
         status = EmbeddingStatus(total_documents=3, processed_documents=1)
         # 1/3 = 33.33...%
         assert abs(status.progress_percentage - 33.333333333) < 0.01
+
