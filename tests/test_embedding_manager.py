@@ -259,7 +259,7 @@ class TestEmbeddingManager:
         mock_ollama.embeddings.return_value = mock_response
         
         texts = ["text1", "text2"]
-        result = embedding_manager._embed_batch_ollama(texts)
+        result = embedding_manager.embed_text(texts)
         
         assert isinstance(result, list)
 
@@ -278,7 +278,7 @@ class TestEmbeddingManager:
         # Mix of string and non-string
         texts = ["valid", None, 123]
         
-        result = embedding_manager._embed_batch_ollama(texts)
+        result = embedding_manager.embed_text(texts)
         
         assert len(result) == 3
 
@@ -296,7 +296,7 @@ class TestEmbeddingManager:
         mock_ollama.embeddings.side_effect = side_effect
         
         texts = ["text1", "text2"]
-        result = embedding_manager._embed_batch_ollama(texts)
+        result = embedding_manager.embed_text(texts)
         
         # Should still have 3 results (the failed one gets empty list)
         assert len(result) == 2

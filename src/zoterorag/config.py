@@ -57,7 +57,7 @@ class Config:
         self.AUTO_EMBED_SENTENCES: bool = os.getenv("AUTO_EMBED_SENTENCES", "false").lower() == "true"
 
         # Threading for embedding
-        workers = _get_int("MAX_EMBEDDING_WORKERS", 4)
+        workers = _get_int("MAX_EMBEDDING_WORKERS", 9)
         if workers <= 0:
             workers = max(1, (os.cpu_count() or 2) // 2)
         self.MAX_EMBEDDING_WORKERS = workers

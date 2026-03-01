@@ -14,6 +14,8 @@ from .models import CitationReturnMode
 
 
 logger = logging.getLogger(__name__)
+#set level to debug
+logger.setLevel(logging.DEBUG)
 
 
 class MCPZoteroServer:
@@ -55,23 +57,23 @@ class MCPZoteroServer:
 
     def _get_metadata_for_key(self, item_key: str) -> dict:
         """Get cached or fresh metadata for an item."""
-        print(f"[DEBUG] _get_metadata_for_key called with key: {item_key}")
+        logger.debug("_get_metadata_for_key called with key: {item_key}")
         
         if item_key in self._metadata_cache:
-            print(f"[DEBUG] Found metadata in cache for key: {item_key}")
+            logger.debug("Found metadata in cache for key: {item_key}")
             return self._metadata_cache[item_key]
         
         # Try to get from Zotero
-        print(f"[DEBUG] Calling zotero_client.get_item_metadata({item_key})")
+        logger.debug("Calling zotero_client.get_item_metadata({item_key})")
         metadata = self.zotero_client.get_item_metadata(item_key)
-        print(f"[DEBUG] Got metadata result: {metadata}")
+        logger.debug("Got metadata result: {metadata}")
         
         if metadata:
             self._metadata_cache[item_key] = metadata
             return metadata
         
         # Return empty metadata structure
-        print(f"[DEBUG] No metadata found, returning empty structure for key: {item_key}")
+        logger.debug("No metadata found, returning empty structure for key: {item_key}")
         return {
             "bibtex": "",
             "file_path": "",
@@ -106,7 +108,7 @@ class MCPZoteroServer:
         Returns enriched results including Zotero item BibTeX/file metadata as well as
         per-sentence citation metadata.
         """
-        print(f"[DEBUG] search_documents called with query: {query}")
+        logger.debug(f"search_documents called with query: {query}")
 
         results = self.search_engine.search_best_sentences(
             query=query,
@@ -118,9 +120,9 @@ class MCPZoteroServer:
         if require_cited_bibtex:
             before = len(results)
             results = [r for r in results if getattr(r, "cited_bibtex", None)]
-            print(f"[DEBUG] Filtered require_cited_bibtex: {before} -> {len(results)}")
+            logger.debug(f"Filtered require_cited_bibtex: {before} -> {len(results)}")
 
-        print(f"[DEBUG] Got {len(results)} search results")
+        logger.debug(f"Got {len(results)} search results")
         
         # First pass: collect all unique keys and fetch metadata for each once
         # This ensures we call Zotero API at most once per unique document
@@ -128,7 +130,7 @@ class MCPZoteroServer:
         
         for r in results:
             zotero_key = r.zotero_key
-            print(f"[DEBUG] Processing result with zotero_key: {zotero_key}")
+            logger.debug(f"Processing result with zotero_key: {zotero_key}")
             
             if zotero_key and zotero_key not in key_to_metadata:
                 # Fetch Zotero metadata (only once per unique document)
@@ -178,9 +180,10 @@ class MCPZoteroServer:
         # Remove results below threshold:
         for r in enriched_results:
             if r.get("relevance_score", 0) >= min_relevance:
+                logger.debug(f"Keeping result with relevance {r.get('relevance_score', 0)}, sentence: {r.get('text', '')[:100]}...")
                 ret.append(r)
             else:
-                print(f"[DEBUG] Filtering out result with relevance {r.get('relevance_score', 0)} below threshold {min_relevance}, sentence: {r.get('text', '')[:100]}...")
+                logger.debug(f"Filtering out result with relevance {r.get('relevance_score', 0)} below threshold {min_relevance}, sentence: {r.get('text', '')[:100]}...")
         
         return ret
 
@@ -403,7 +406,7 @@ async def search_documents(
     citation_return_mode: CitationReturnMode = "sentence",
     require_cited_bibtex: bool = False,
 ) -> list[dict]:
-    print(f"[DEBUG] MCP tool search_documents called with query: {query}")
+    logger.debug("MCP tool search_documents called with query: {query}")
     """Search across embedded documents using two-stage RAG."""
     return await get_server().search_documents(
         query=query,
