@@ -77,7 +77,7 @@ class TestExtractQuarterSections:
     
     @pytest.fixture
     def processor(self):
-        return PDFProcessor(page_splits=4)
+        return PDFProcessor()
     
     def test_extract_quarter_sections_nonexistent_file(self, processor):
         """Should return empty list for nonexistent file."""

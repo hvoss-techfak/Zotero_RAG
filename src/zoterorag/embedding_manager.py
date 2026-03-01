@@ -29,7 +29,7 @@ class EmbeddingManager:
     def __init__(self, config: Config, zotero_client=None):
         self.config = config
         self.vector_store = VectorStore(str(config.VECTOR_STORE_DIR))
-        self.pdf_processor = PDFProcessor(page_splits=config.PAGE_SPLITS)
+        self.pdf_processor = PDFProcessor()
         self._executor: Optional[ThreadPoolExecutor] = None
         self.zotero_client = zotero_client
 

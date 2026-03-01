@@ -26,7 +26,6 @@ class PDFProcessor:
     def __init__(
         self,
         use_layout: bool = True,
-        page_splits: int | None = None,
         citation_fuzzy_threshold: float | None = None,
     ):
         """Initialize PDF processor.
@@ -41,12 +40,6 @@ class PDFProcessor:
                                       Defaults to config value.
         """
         self.use_layout = use_layout
-        self.page_splits = page_splits if page_splits is not None else config.PAGE_SPLITS
-        self.citation_fuzzy_threshold = (
-            citation_fuzzy_threshold
-            if citation_fuzzy_threshold is not None
-            else config.CITATION_FUZZY_MATCH_THRESHOLD
-        )
         self.meta_count = 0
 
     def extract_markdown(self, pdf_path: str) -> str:

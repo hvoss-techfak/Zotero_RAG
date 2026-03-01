@@ -110,17 +110,34 @@ class MCPZoteroServer:
         """
         logger.debug(f"search_documents called with query: {query}")
 
+        temp_top_sentences = top_sentences * 10 if require_cited_bibtex else top_sentences
+
         results = self.search_engine.search_best_sentences(
             query=query,
             document_key=document_key,
-            top_sentences=top_sentences,
+            top_sentences=temp_top_sentences,
             citation_return_mode=citation_return_mode,
         )
 
         if require_cited_bibtex:
             before = len(results)
             results = [r for r in results if getattr(r, "cited_bibtex", None)]
+            results = results[:top_sentences]
             logger.debug(f"Filtered require_cited_bibtex: {before} -> {len(results)}")
+
+        ret = []
+        # Remove results below threshold:
+        for r in results:
+            if r.relevance_score >= min_relevance:
+                logger.debug(
+                    f"Keeping result with relevance {r.relevance_score}, sentence: {r.text[:150]}...")
+                ret.append(r)
+            else:
+                logger.debug(
+                    f"Filtering out result with relevance {r.relevance_score} below threshold {min_relevance}, sentence: {r.text[:150]}...")
+        results = ret
+
+
 
         logger.debug(f"Got {len(results)} search results")
         
@@ -176,15 +193,7 @@ class MCPZoteroServer:
             
             enriched_results.append(result_dict)
 
-        ret = []
-        # Remove results below threshold:
-        for r in enriched_results:
-            if r.get("relevance_score", 0) >= min_relevance:
-                logger.debug(f"Keeping result with relevance {r.get('relevance_score', 0)}, sentence: {r.get('text', '')[:100]}...")
-                ret.append(r)
-            else:
-                logger.debug(f"Filtering out result with relevance {r.get('relevance_score', 0)} below threshold {min_relevance}, sentence: {r.get('text', '')[:100]}...")
-        
+
         return ret
 
     async def get_library_items(self, limit: int = 25) -> list[dict]:
@@ -406,7 +415,7 @@ async def search_documents(
     citation_return_mode: CitationReturnMode = "sentence",
     require_cited_bibtex: bool = False,
 ) -> list[dict]:
-    logger.debug("MCP tool search_documents called with query: {query}")
+    logger.debug(f"MCP tool search_documents called with query: {query}")
     """Search across embedded documents using two-stage RAG."""
     return await get_server().search_documents(
         query=query,

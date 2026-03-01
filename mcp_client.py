@@ -118,6 +118,8 @@ async def run_search(client: Client, query: str):
             {
                 "query": query,
                 "top_sentences": 10,
+                "min_relevance": 0.0,
+                "require_cited_bibtex":True,
             },
         )
 

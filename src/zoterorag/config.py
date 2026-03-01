@@ -75,12 +75,6 @@ class Config:
         # PDF processing options
         self.PAGE_SPLITS: int = max(1, _get_int("PAGE_SPLITS", 4))
 
-        # Citation fuzzy matching threshold (0.0 to 1.0)
-        # Only applies when exact/normalized match fails
-        self.CITATION_FUZZY_MATCH_THRESHOLD: float = _get_float(
-            "CITATION_FUZZY_MATCH_THRESHOLD", 0.7
-        )
-
     @classmethod
     def from_file(cls, path: str) -> "Config":
         """Load config from file (for future use)."""
