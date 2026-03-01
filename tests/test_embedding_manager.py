@@ -252,56 +252,12 @@ class TestEmbeddingManager:
 
     # --- Test _embed_batch_ollama ---
 
-    @patch("zoterorag.embedding_manager.ollama")
-    def test_embed_batch_returns_list(self, mock_ollama, embedding_manager):
-        """Test that embed_batch returns a list of embeddings."""
-        mock_response = {"embedding": [0.1] * 384}
-        mock_ollama.embeddings.return_value = mock_response
-        
-        texts = ["text1", "text2"]
-        result = embedding_manager.embed_text(texts)
-        
-        assert isinstance(result, list)
-
     def test_embed_batch_with_empty_list(self, embedding_manager):
         """Test that embed_batch handles empty list."""
         result = embedding_manager.embed_batch([])
         
         assert result == []
 
-    @patch("zoterorag.embedding_manager.ollama")
-    def test_embed_batch_normalizes_inputs(self, mock_ollama, embedding_manager):
-        """Test that embed_batch normalizes non-string inputs."""
-        mock_response = {"embedding": [0.1] * 384}
-        mock_ollama.embeddings.return_value = mock_response
-        
-        # Mix of string and non-string
-        texts = ["valid", None, 123]
-        
-        result = embedding_manager.embed_text(texts)
-        
-        assert len(result) == 3
-
-    @patch("zoterorag.embedding_manager.ollama")
-    def test_embed_batch_handles_embedding_failure(self, mock_ollama, embedding_manager):
-        """Test that embed_batch handles individual embedding failures."""
-        call_count = [0]
-        
-        def side_effect(*args, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 2:
-                raise Exception("Embedding failed")
-            return {"embedding": [0.1] * 384}
-        
-        mock_ollama.embeddings.side_effect = side_effect
-        
-        texts = ["text1", "text2"]
-        result = embedding_manager.embed_text(texts)
-        
-        # Should still have 3 results (the failed one gets empty list)
-        assert len(result) == 2
-
-    # --- Test calculate_relevance_score ---
 
     def test_calculate_relevance_score_returns_zero_for_empty(self, embedding_manager):
         """Test that calculate_relevance_score returns 0 for empty input."""

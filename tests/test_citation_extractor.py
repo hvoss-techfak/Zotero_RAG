@@ -29,3 +29,10 @@ def test_reference_text_to_bibtex_minimal():
     assert "author" in bib.lower()
     assert "2017" in bib
 
+
+def test_extract_citation_numbers_from_sentence_mid_sentence_multiple_groups():
+    s = (
+        "In the following sections, we will describe the Transformer, motivate self-attention "
+        "and discuss its advantages over models such as [17, 18] and [9]."
+    )
+    assert extract_citation_numbers_from_sentence(s) == [9, 17, 18]

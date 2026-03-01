@@ -12,6 +12,7 @@ import pymupdf4llm
 from .config import config
 from .models import Document, Sentence
 from .citation_extractor import extract_citation_metadata
+from .citation_extractor import extract_citation_numbers_from_sentence
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +241,6 @@ class PDFProcessor:
                 continue
 
             for sentence in all_sentences:
-                print(sentence)
                 part_sentence = self._sentence_from_text(
                     document_id=path.stem,
                     page=page,
@@ -278,15 +278,26 @@ class PDFProcessor:
             citation_numbers: list[int] = []
             referenced_texts: list[str] = []
             referenced_bibtex: list[str] = []
+
+            meta = None
             if citations_by_sentence:
                 meta = citations_by_sentence.get(sent)
                 if meta is None and citations_by_normalized:
                     meta = citations_by_normalized.get(self._normalize_ws(sent))
-                if meta is not None:
-                    # citation_extractor.CitationMetadata dataclass
-                    citation_numbers = list(getattr(meta, "citation_numbers", []) or [])
-                    referenced_texts = list(getattr(meta, "referenced_texts", []) or [])
-                    referenced_bibtex = list(getattr(meta, "referenced_bibtex", []) or [])
+
+            if meta is not None:
+                # citation_extractor.CitationMetadata dataclass
+                citation_numbers = list(getattr(meta, "citation_numbers", []) or [])
+                referenced_texts = list(getattr(meta, "referenced_texts", []) or [])
+                referenced_bibtex = list(getattr(meta, "referenced_bibtex", []) or [])
+            else:
+                # Fallback: parse bracketed numeric citations directly from the sentence.
+                # This handles cases where citation groups appear mid-sentence and/or
+                # the sentence text doesn't exactly match what PyMuPDF extracted.
+                try:
+                    citation_numbers = extract_citation_numbers_from_sentence(sent)
+                except Exception:
+                    citation_numbers = []
 
             out.append(
                 Sentence(
