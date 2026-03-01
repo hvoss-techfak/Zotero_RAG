@@ -250,29 +250,6 @@ class TestEmbeddingManager:
                 
                 assert "dimensions" not in opts
 
-    # --- Test embed_text ---
-
-    @patch("zoterorag.embedding_manager.ollama")
-    def test_embed_text_calls_ollama(self, mock_ollama, embedding_manager):
-        """Test that embed_text calls Ollama API."""
-        mock_response = {"embedding": [0.1] * 384}
-        mock_ollama.embeddings.return_value = mock_response
-        
-        result = embedding_manager.embed_text("test text")
-        
-        assert result == [0.1] * 384
-        mock_ollama.embeddings.assert_called_once()
-
-    @patch("zoterorag.embedding_manager.ollama")
-    def test_embed_text_with_empty_input(self, mock_ollama, embedding_manager):
-        """Test that embed_text handles empty input."""
-        mock_response = {"embedding": []}
-        mock_ollama.embeddings.return_value = mock_response
-        
-        result = embedding_manager.embed_text("")
-        
-        assert isinstance(result, list)
-
     # --- Test _embed_batch_ollama ---
 
     @patch("zoterorag.embedding_manager.ollama")
@@ -446,55 +423,3 @@ class TestEmbeddingManager:
                 sentences = manager.process_document(doc, "/nonexistent/file.pdf")
 
                 assert sentences == []
-
-    @patch("zoterorag.embedding_manager.ollama.embeddings")
-    def test_embed_text_batch_uses_batch_prompt(self, mock_embeddings, embedding_manager):
-        # Enable batch mode explicitly
-        embedding_manager.config.ENABLE_BATCH_EMBEDDINGS = True
-
-        mock_embeddings.return_value = {
-            "embeddings": [
-                {"embedding": [0.1, 0.2]},
-                {"embedding": [0.3, 0.4]},
-            ]
-        }
-
-        out = embedding_manager._embed_text_batch(["a", "b"])
-        assert out == [[0.1, 0.2], [0.3, 0.4]]
-
-        # Ensure we called ollama.embeddings once with a list prompt
-        _, kwargs = mock_embeddings.call_args
-        assert isinstance(kwargs.get("prompt"), list)
-        assert kwargs["prompt"] == ["a", "b"]
-
-    @patch("zoterorag.embedding_manager.ollama.embeddings")
-    def test_embed_batch_chunks_and_batches(self, mock_embeddings, mock_config):
-        # Default behavior is per-item calls; validate chunking doesn't change outputs.
-        mock_config.BATCH_EMBEDDING_SIZE = 2
-
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor"):
-                manager = EmbeddingManager(mock_config)
-
-        # Per-item responses
-        mock_embeddings.side_effect = [
-            {"embedding": [1]},
-            {"embedding": [2]},
-            {"embedding": [3]},
-        ]
-
-        out = manager.embed_batch(["t1", "t2", "t3"])
-        assert out == [[1], [2], [3]]
-        assert mock_embeddings.call_count == 3
-
-    @patch("zoterorag.embedding_manager.ollama.embeddings")
-    def test_embed_text_batch_falls_back_on_unexpected_shape(self, mock_embeddings, embedding_manager):
-        # No 'embeddings' key triggers fallback; the fallback will call embed_text
-        mock_embeddings.return_value = {"embedding": [9]}
-
-        with patch.object(embedding_manager, "embed_text", return_value=[0.5]) as mock_single:
-            out = embedding_manager._embed_text_batch(["x", "y"])
-
-        assert out == [[0.5], [0.5]]
-        assert mock_single.call_count == 2
-

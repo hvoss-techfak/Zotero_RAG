@@ -24,6 +24,19 @@ class Config:
         self.ZOTERO_API_KEY: str = os.getenv("ZOTERO_API_KEY", "")
         self.ZOTERO_LIBRARY_ID: str | None = os.getenv("ZOTERO_LIBRARY_ID")
 
+        # DOI + Zotero Connector import settings
+        self.DOI_BIBTEX_BASE_URL: str = os.getenv("DOI_BIBTEX_BASE_URL", "https://doi.org/")
+        self.DOI_BIBTEX_TIMEOUT_SECONDS: int = _get_int("DOI_BIBTEX_TIMEOUT_SECONDS", 10)
+
+        # Zotero Connector import endpoint is served by the local Zotero Connector.
+        # Example: http://127.0.0.1:23119/connector/import
+        self.ZOTERO_CONNECTOR_IMPORT_PATH: str = os.getenv("ZOTERO_CONNECTOR_IMPORT_PATH", "/connector/import")
+        self.ZOTERO_CONNECTOR_TIMEOUT_SECONDS: int = _get_int("ZOTERO_CONNECTOR_TIMEOUT_SECONDS", 15)
+
+        # Optional default target collection key when importing items via the connector.
+        # If empty, Zotero decides where to place the new item.
+        self.ZOTERO_DEFAULT_IMPORT_COLLECTION_KEY: str = os.getenv("ZOTERO_DEFAULT_IMPORT_COLLECTION_KEY", "")
+
         # Ollama settings
         self.OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         self.EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "qwen3-embedding:0.6b")

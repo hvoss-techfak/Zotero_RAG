@@ -7,7 +7,7 @@ dependencies = [
     "requests>=2.31",
     "pymupdf4llm>=0.0.20",
     "chromadb==1.5.1",
-    "ollama>=0.1.41",
+    "ollama>=0.6.1",
     "numpy>=1.24",
     "tenacity>=8.0",
     "pymupdf-layout",

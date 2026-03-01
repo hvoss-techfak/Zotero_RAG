@@ -1119,3 +1119,103 @@ class ZoteroClient:
         }
         return type_map.get(item_type, "misc")
 
+    def import_bibtex_via_connector(
+        self,
+        bibtex: str,
+        *,
+        session_id: str | None = None,
+        collection_key: str | None = None,
+        timeout_seconds: int | None = None,
+    ) -> dict:
+        """Import a BibTeX entry via the Zotero Connector local endpoint.
+
+        Zotero Connector listens on the same base URL as the local API (23119 by default)
+        but under the `/connector/...` path.
+
+        Args:
+            bibtex: BibTeX string to import.
+            session_id: Optional connector session id; if omitted a random UUID is used.
+            collection_key: Optional collection key to target. If omitted, uses
+                Config.ZOTERO_DEFAULT_IMPORT_COLLECTION_KEY when set.
+            timeout_seconds: Optional request timeout override.
+
+        Returns:
+            Dict containing status, http_status, and response payload.
+        """
+        import uuid
+
+        if not bibtex or not bibtex.strip():
+            return {"status": "error", "message": "BibTeX must be non-empty"}
+
+        if session_id is None:
+            session_id = str(uuid.uuid4())
+
+        # Decide collection key: explicit arg wins, then config default.
+        if collection_key is None:
+            try:
+                from .config import config as _cfg
+
+                collection_key = _cfg.ZOTERO_DEFAULT_IMPORT_COLLECTION_KEY or None
+            except Exception:
+                collection_key = None
+
+        try:
+            from .config import config as _cfg
+
+            import_path = getattr(_cfg, "ZOTERO_CONNECTOR_IMPORT_PATH", "/connector/import")
+            default_timeout = getattr(_cfg, "ZOTERO_CONNECTOR_TIMEOUT_SECONDS", 15)
+        except Exception:
+            import_path = "/connector/import"
+            default_timeout = 15
+
+        timeout = default_timeout if timeout_seconds is None else timeout_seconds
+
+        url = f"{self.api_url}{import_path}"
+        params: dict[str, str] = {"session": session_id}
+        if collection_key:
+            params["collection"] = collection_key
+
+        headers = {
+            # This endpoint expects the connector header name (different from Zotero-API-Version)
+            "X-Zotero-Connector-API-Version": str(self.API_VERSION),
+            "Content-Type": "application/x-bibtex",
+        }
+
+        try:
+            resp = self.session.post(url, params=params, headers=headers, data=bibtex.encode("utf-8"), timeout=timeout)
+            ok = resp.status_code in (200, 201)
+            try:
+                payload = resp.json()
+            except ValueError:
+                payload = resp.text
+
+            if not ok:
+                return {
+                    "status": "error",
+                    "http_status": resp.status_code,
+                    "message": "Connector import failed",
+                    "response": payload,
+                }
+
+            # The connector typically returns a list of imported items with keys.
+            imported_keys: list[str] = []
+            if isinstance(payload, list):
+                for item in payload:
+                    if isinstance(item, dict) and item.get("key"):
+                        imported_keys.append(item["key"])
+
+            return {
+                "status": "imported",
+                "http_status": resp.status_code,
+                "response": payload,
+                "imported_keys": imported_keys,
+                "session": session_id,
+                "collection": collection_key or "",
+            }
+        except requests.RequestException as e:
+            return {
+                "status": "error",
+                "message": f"Connector import request failed: {e}",
+                "session": session_id,
+                "collection": collection_key or "",
+            }

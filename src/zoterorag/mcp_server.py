@@ -6,6 +6,7 @@ from typing import Optional
 from fastmcp import FastMCP
 
 from .config import Config
+from .doi_client import DoiClient, normalize_doi
 from .embedding_manager import EmbeddingManager
 from .search_engine import SearchEngine
 from .zotero_client import ZoteroClient
@@ -21,6 +22,10 @@ class MCPZoteroServer:
     def __init__(self, config: Config):
         self.config = config
         self.zotero_client = ZoteroClient(api_url=config.ZOTERO_API_URL)
+        self.doi_client = DoiClient(
+            base_url=config.DOI_BIBTEX_BASE_URL,
+            timeout_seconds=float(config.DOI_BIBTEX_TIMEOUT_SECONDS),
+        )
         self.embedding_manager = EmbeddingManager(config)
         self.search_engine = SearchEngine(config)
         # Cache for document metadata to avoid repeated API calls
@@ -335,6 +340,31 @@ class MCPZoteroServer:
 
         return {"status": "reembedding", "document_key": document_key}
 
+    async def import_item_by_doi(self, doi: str, collection_key: Optional[str] = None) -> dict:
+        """Import a bibliographic item into Zotero by DOI.
+
+        Accepts a bare DOI ("10.1111/cgf.13217") or a DOI URL ("https://doi.org/... ").
+        """
+        try:
+            norm = normalize_doi(doi)
+        except ValueError as e:
+            return {"status": "error", "message": str(e)}
+
+        try:
+            bibtex = self.doi_client.fetch_bibtex(norm)
+        except Exception as e:
+            return {"status": "error", "doi": norm, "message": f"Failed to fetch BibTeX: {e}"}
+
+        result = self.zotero_client.import_bibtex_via_connector(
+            bibtex,
+            collection_key=collection_key,
+            timeout_seconds=self.config.ZOTERO_CONNECTOR_TIMEOUT_SECONDS,
+        )
+        result.setdefault("doi", norm)
+        # Helpful for debugging but not too noisy: only include bibtex length.
+        result.setdefault("bibtex_chars", len(bibtex))
+        return result
+
     def shutdown(self):
         """Shutdown the server."""
         self.embedding_manager.shutdown()
@@ -419,6 +449,12 @@ async def delete_document(document_key: str) -> dict:
 async def reembed_document(document_key: str) -> dict:
     """Re-embed a specific document."""
     return await get_server().reembed_document(document_key)
+
+
+@mcp.tool
+async def import_item_by_doi(doi: str, collection_key: Optional[str] = None) -> dict:
+    """Fetch BibTeX for a DOI and import the item into Zotero via the Connector."""
+    return await get_server().import_item_by_doi(doi=doi, collection_key=collection_key)
 
 
 def main() -> None:

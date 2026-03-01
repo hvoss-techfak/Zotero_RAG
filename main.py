@@ -327,7 +327,7 @@ class ZoteroRAGApplication:
                 manager = EmbeddingManager(self.config)
             
             # Try to embed a simple test text
-            embedding = manager.embed_text("test")
+            embedding = manager.embed_text(["test"])
             
             if embedding and len(embedding) > 0:
                 return True

@@ -1,5 +1,5 @@
 """Background embedding manager with ThreadPoolExecutor."""
-
+import json
 import logging
 import os
 import tempfile
@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional, List, Callable
 
 import ollama
+import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from zoterorag.config import Config
@@ -110,14 +111,27 @@ class EmbeddingManager:
         )
         return [response["embedding"]]
 
-    def embed_text(self, text: str) -> List[float]:
-        print(f"Embedding text non underscore: {text[:60]}...")
-        response = ollama.embeddings(
-            model=self.config.EMBEDDING_MODEL,
-            prompt=text,
-            options=self._get_embedding_options(),
+    def embed_text(self, text_list: List[str]) -> List[float]:
+        #we need to request manually
+        #convert list to the format expected by ollama json encoding of list string
+        response = requests.post(
+            url=f"{self.config.OLLAMA_BASE_URL}/api/embed",
+            json={
+                "model": self.config.EMBEDDING_MODEL,
+                "input": text_list,
+                "options": self._get_embedding_options(),
+            },
         )
-        return response["embedding"]
+        if response.status_code != 200:
+            raise ValueError(f"Embedding request failed with status {response.status_code}: {response.text}")
+
+        #to json
+        response = response.json()
+        embeddings = response.get("embeddings")
+        if not embeddings or not isinstance(embeddings, list) or not all(isinstance(e, list) for e in embeddings):
+            raise ValueError(f"Unexpected embedding response format: {response}")
+
+        return embeddings
 
     def _embed_batch_ollama(self, texts: List[str]) -> List[List[float]]:
         if not texts:
@@ -138,12 +152,7 @@ class EmbeddingManager:
 
         for i in range(0, len(normalized), batch_size):
             chunk = normalized[i : i + batch_size]
-            for text in chunk:
-                try:
-                    all_embeddings.append(self.embed_text(text))
-                except Exception as e:
-                    logger.warning("Embedding failed: %s", e)
-                    all_embeddings.append([])
+            all_embeddings.extend(self.embed_text(chunk))
 
         return all_embeddings
 
@@ -375,3 +384,61 @@ class EmbeddingManager:
         magnitude = (sum_total ** 0.5) / len(embedding)
         positive_ratio = sum_positive / len(embedding)
         return (magnitude + positive_ratio) / 2
+
+
+if __name__ == "__main__":
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    import argparse
+    parser = argparse.ArgumentParser(description="Run embedding without MCP server")
+    parser.add_argument(
+        "--pdf-dir",
+        type=str,
+        default="./data/pdfs",
+        help="Directory containing PDF files to embed"
+    )
+    parser.add_argument(
+        "--stop-on-error",
+        action="store_true",
+        help="Stop on first error instead of continuing"
+    )
+    args = parser.parse_args()
+
+    # Ensure directories exist
+    Config.ensure_dirs()
+
+    # Initialize embedding manager
+    config = Config()
+    manager = EmbeddingManager(config)
+
+    # Get documents from PDF directory
+    pdf_dir = Path(args.pdf_dir)
+    documents = manager.get_pdf_documents_from_directory(pdf_dir)
+
+    if not documents:
+        print(f"No PDFs found in {pdf_dir}")
+        sys.exit(1)
+
+    # Filter to unembedded docs
+    embedded = manager.vector_store.get_embedded_documents()
+    pending = [
+        (doc, path) for doc, path in documents
+        if doc.zotero_key not in embedded or embedded[doc.zotero_key] == 0
+    ]
+
+    print(f"Total PDFs: {len(documents)}, Pending: {len(pending)}")
+
+    for doc, _ in pending:
+        print(f"  Pending: {doc.title} ({doc.zotero_key})")
+        pdf_processor = PDFProcessor()
+        try:
+            sentences = pdf_processor.extract_sentences(str(pdf_dir / f"{doc.zotero_key}.pdf"))
+            print(f"    Extracted {len(sentences)} sentences")
+            manager.embed_batch([s.text for s in sentences])
+        except Exception as e:
+            print(f"    Failed to extract sentences: {e}")
