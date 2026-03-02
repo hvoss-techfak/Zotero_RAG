@@ -64,7 +64,7 @@ class Config:
         self.ZOTERO_DEFAULT_IMPORT_COLLECTION_KEY: str = os.getenv("ZOTERO_DEFAULT_IMPORT_COLLECTION_KEY", "")
 
         # Ollama settings
-        self.OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://sideshowbob:11434")
+        self.OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         self.EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "qwen3-embedding:4b")
         self.RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "dengcao/Qwen3-Reranker-0.6B:Q8_0")
 
