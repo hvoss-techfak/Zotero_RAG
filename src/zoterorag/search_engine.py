@@ -4,6 +4,7 @@ import logging
 from typing import List, Optional
 
 import ollama
+from ollama import Client
 
 from .config import Config
 from .models import SearchResult, CitationReturnMode
@@ -38,7 +39,8 @@ class SearchEngine:
         return opts
 
     def _get_query_embedding(self, query: str) -> List[float]:
-        response = ollama.embeddings(
+        client = Client(host=self.config.OLLAMA_BASE_URL)
+        response = client.embeddings(
             model=self.config.EMBEDDING_MODEL,
             prompt=query,
             options=self._get_embedding_options(),

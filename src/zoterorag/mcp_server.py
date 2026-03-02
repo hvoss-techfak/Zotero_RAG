@@ -5,13 +5,13 @@ from typing import Optional
 
 from fastmcp import FastMCP
 
-from .config import Config
-from .doi_client import DoiClient, normalize_doi
-from .embedding_manager import EmbeddingManager
-from .search_engine import SearchEngine
-from .zotero_client import ZoteroClient
-from .models import CitationReturnMode
-
+from zoterorag.config import Config
+from zoterorag.doi_client import DoiClient, normalize_doi
+from zoterorag.embedding_manager import EmbeddingManager
+from zoterorag.search_engine import SearchEngine
+from zoterorag.zotero_client import ZoteroClient
+from zoterorag.models import CitationReturnMode, SearchResult
+from zoterorag.reranker import Reranker
 
 logger = logging.getLogger(__name__)
 #set level to debug
@@ -57,23 +57,23 @@ class MCPZoteroServer:
 
     def _get_metadata_for_key(self, item_key: str) -> dict:
         """Get cached or fresh metadata for an item."""
-        logger.debug("_get_metadata_for_key called with key: {item_key}")
+        logger.debug(f"_get_metadata_for_key called with key: {item_key}")
         
         if item_key in self._metadata_cache:
-            logger.debug("Found metadata in cache for key: {item_key}")
+            logger.debug(f"Found metadata in cache for key: {item_key}")
             return self._metadata_cache[item_key]
         
         # Try to get from Zotero
-        logger.debug("Calling zotero_client.get_item_metadata({item_key})")
+        logger.debug(f"Calling zotero_client.get_item_metadata({item_key})")
         metadata = self.zotero_client.get_item_metadata(item_key)
-        logger.debug("Got metadata result: {metadata}")
+        logger.debug(f"Got metadata result: {metadata}")
         
         if metadata:
             self._metadata_cache[item_key] = metadata
             return metadata
         
         # Return empty metadata structure
-        logger.debug("No metadata found, returning empty structure for key: {item_key}")
+        logger.debug(f"No metadata found, returning empty structure for key: {item_key}")
         return {
             "bibtex": "",
             "file_path": "",
@@ -84,6 +84,13 @@ class MCPZoteroServer:
         }
 
     # --- MCP Tool Implementations ---
+
+    def do_reranking(self, results: list[SearchResult], query: str) -> list[SearchResult]:
+        """Optional second-stage reranking of search results."""
+
+        rer = Reranker()
+        results = rer.rerank(results,query)
+        return results
 
     async def search_documents(
         self,
@@ -135,7 +142,9 @@ class MCPZoteroServer:
             else:
                 logger.debug(
                     f"Filtering out result with relevance {r.relevance_score} below threshold {min_relevance}, sentence: {r.text[:150]}...")
-        results = ret
+
+        # Do reranking
+        results = self.do_reranking(ret, query)
 
 
 
@@ -194,7 +203,7 @@ class MCPZoteroServer:
             enriched_results.append(result_dict)
 
 
-        return ret
+        return enriched_results
 
     async def get_library_items(self, limit: int = 25) -> list[dict]:
         """Get items from Zotero library."""

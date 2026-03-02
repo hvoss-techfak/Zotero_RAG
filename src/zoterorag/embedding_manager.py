@@ -113,7 +113,7 @@ class EmbeddingManager:
         )
         return [response["embedding"]]
 
-    def embed_text(self, text_list: List[str]) -> List[float]:
+    def embed_text(self, text_list: List[str]) -> List[List[float]]:
         #we need to request manually
         #convert list to the format expected by ollama json encoding of list string
         response = requests.post(

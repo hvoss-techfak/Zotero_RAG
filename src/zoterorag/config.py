@@ -1,7 +1,26 @@
 """Configuration management for ZoteroRAG."""
 
 import os
+import shutil
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+def _setup_env_file() -> None:
+    """Ensure .env file exists by copying from .env.example if needed."""
+    env_path = Path(".env")
+    env_example_path = Path(".env.example")
+
+    if not env_path.exists() and env_example_path.exists():
+        shutil.copy(env_example_path, env_path)
+
+
+# Setup .env file on module import
+_setup_env_file()
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def _get_float(name: str, default: float) -> float:
@@ -45,12 +64,12 @@ class Config:
         self.ZOTERO_DEFAULT_IMPORT_COLLECTION_KEY: str = os.getenv("ZOTERO_DEFAULT_IMPORT_COLLECTION_KEY", "")
 
         # Ollama settings
-        self.OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "qwen3-embedding:0.6b")
+        self.OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://sideshowbob:11434")
+        self.EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "qwen3-embedding:4b")
         self.RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "dengcao/Qwen3-Reranker-0.6B:Q8_0")
 
         # Embedding dimensions: 0 means auto-detect from model
-        self.EMBEDDING_DIMENSIONS: int = _get_int("EMBEDDING_DIMENSIONS", 512)
+        self.EMBEDDING_DIMENSIONS: int = _get_int("EMBEDDING_DIMENSIONS", 1024)
 
         # Search parameters
         self.DEFAULT_TOP_X: int = _get_int("DEFAULT_TOP_X", 10)

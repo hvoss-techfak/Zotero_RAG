@@ -13,6 +13,8 @@ dependencies = [
     "pymupdf-layout",
     "fastmcp",
     "python-dotenv>=1.0",
+    "torch>=2.10.0",
+    "transformers>=5.2.0",
 ]
 
 [project.optional-dependencies]

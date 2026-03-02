@@ -68,6 +68,7 @@ class SearchResult:
     zotero_key: str
     relevance_score: float = 0.0
     rerank_score: float = 0.0
+    final_score: float = 0.0
     # Enhanced metadata fields
     bibtex: str = ""
     file_path: str = ""

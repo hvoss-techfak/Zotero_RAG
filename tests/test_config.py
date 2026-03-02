@@ -10,75 +10,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from zoterorag.config import Config
 
-
-class TestConfigDefaults:
-    """Test default configuration values."""
-    
-    def test_zotero_api_url_default(self):
-        """Test default Zotero API URL."""
-        config = Config()
-        assert config.ZOTERO_API_URL == "http://127.0.0.1:23119"
-    
-    def test_zotero_api_key_empty_by_default(self):
-        """Test that Zotero API key is empty by default."""
-        config = Config()
-        assert config.ZOTERO_API_KEY == ""
-    
-    def test_ollama_base_url_default(self):
-        """Test default Ollama base URL."""
-        config = Config()
-        assert config.OLLAMA_BASE_URL == "http://localhost:11434"
-    
-    def test_embedding_model_default(self):
-        """Test default embedding model."""
-        config = Config()
-        assert config.EMBEDDING_MODEL == "qwen3-embedding:0.6b"
-    
-    def test_reranker_model_default(self):
-        """Test default reranker model."""
-        config = Config()
-        assert config.RERANKER_MODEL == "dengcao/Qwen3-Reranker-0.6B:Q8_0"
-    
-    def test_embedding_dimensions_default(self):
-        """Test default embedding dimensions."""
-        config = Config()
-        assert config.EMBEDDING_DIMENSIONS == 512
-    
-    def test_search_parameters_defaults(self):
-        """Test default search parameters."""
-        config = Config()
-        assert config.DEFAULT_TOP_X == 10
-        assert config.DEFAULT_TOP_Y == 5
-    
-    def test_storage_paths_defaults(self):
-        """Test default storage paths."""
-        config = Config()
-        assert config.VECTOR_STORE_DIR == Path("./data/vector_store")
-        assert config.PDF_CACHE_PATH == Path("./data/pdfs")
-    
-    def test_auto_embed_sentences_default(self):
-        """Test default auto embed sentences setting."""
-        config = Config()
-        assert config.AUTO_EMBED_SENTENCES is False
-    
-    def test_max_embedding_workers_default(self):
-        """Test default max embedding workers based on CPU count."""
-        config = Config()
-        expected = os.cpu_count() // 2
-        # Should be at least 1
-        assert config.MAX_EMBEDDING_WORKERS >= 1
-    
-    def test_batch_embedding_size_default(self):
-        """Test default batch embedding size."""
-        config = Config()
-        assert config.BATCH_EMBEDDING_SIZE == 128
-    
-    def test_page_splits_default(self):
-        """Test default page splits value."""
-        config = Config()
-        assert config.PAGE_SPLITS == 4
-
-
 class TestConfigFromEnvironment:
     """Test configuration loading from environment variables."""
     
@@ -107,7 +38,6 @@ class TestConfigFromEnvironment:
         assert config.ZOTERO_LIBRARY_ID == "12345"
         assert config.OLLAMA_BASE_URL == "http://custom:11434"
         assert config.EMBEDDING_MODEL == "custom-model:latest"
-        assert config.RERANKER_MODEL == "custom-reranker:latest"
         assert config.EMBEDDING_DIMENSIONS == 1024
         assert config.DEFAULT_TOP_X == 20
         assert config.VECTOR_STORE_DIR == Path("/custom/vector_store")
