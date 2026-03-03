@@ -271,8 +271,13 @@ class EmbeddingManager:
             sentences = self.process_document(document, str(temp_path))
 
             sent_embeddings = self.embed_batch([s.text for s in sentences])
-            self.vector_store.add_sentences(sentences, sent_embeddings, document_key=doc_key)
-            self.vector_store.update_embedded_document(doc_key, len(sentences))
+            try:
+                self.vector_store.add_sentences(sentences, sent_embeddings, document_key=doc_key)
+                self.vector_store.update_embedded_document(doc_key, len(sentences))
+            except Exception as e:
+                logger.error("Failed to store embeddings for document %s: %s", doc_key, e)
+                if callback:
+                    callback(EmbeddingStatus(is_running=False))
 
             if callback:
                 callback(

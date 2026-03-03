@@ -91,6 +91,9 @@ class Config:
         # Batch embedding settings
         self.BATCH_EMBEDDING_SIZE: int = _get_int("BATCH_EMBEDDING_SIZE", 128)
 
+        # Batch size for vector store upserts (ChromaDB has internal limits)
+        self.BATCH_VECTOR_STORE_SIZE: int = _get_int("BATCH_VECTOR_STORE_SIZE", 5000)
+
         # PDF processing options
         self.PAGE_SPLITS: int = max(1, _get_int("PAGE_SPLITS", 4))
 

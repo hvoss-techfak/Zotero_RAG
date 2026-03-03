@@ -179,48 +179,61 @@ class VectorStore:
         sentences: List[Sentence],
         embeddings: List[List[float]],
         document_key: str,
+        batch_size: int = 5000,
     ):
-        """Add sentence embeddings to the store."""
+        """Add sentence embeddings to the store.
+
+        Args:
+            sentences: List of Sentence objects to add.
+            embeddings: Corresponding embedding vectors.
+            document_key: The document key these sentences belong to.
+            batch_size: Maximum number of items per upsert operation (ChromaDB limit).
+        """
         if not sentences or not embeddings:
             return
 
-        ids = [s.id for s in sentences]
-        documents = [s.text for s in sentences]
+        # Process in chunks to avoid ChromaDB's internal batch size limit
+        for i in range(0, len(sentences), batch_size):
+            chunk_sentences = sentences[i : i + batch_size]
+            chunk_embeddings = embeddings[i : i + batch_size]
 
-        def _clip_list(v: list, limit: int = 50) -> list:
-            # Keep metadata bounded to avoid bloating the vector DB.
-            return list(v[:limit]) if v else []
+            ids = [s.id for s in chunk_sentences]
+            documents = [s.text for s in chunk_sentences]
 
-        metadatas = []
-        for s in sentences:
-            meta = {
-                "document_key": document_key,
-                "page": int(s.page),
-                "page_section": int(s.page_section) if s.page_section is not None else None,
-                "sentence_index": int(s.sentence_index),
-            }
+            def _clip_list(v: list, limit: int = 50) -> list:
+                # Keep metadata bounded to avoid bloating the vector DB.
+                return list(v[:limit]) if v else []
 
-            citation_numbers = _clip_list([int(n) for n in (s.citation_numbers or [])])
-            referenced_texts = _clip_list([str(t) for t in (s.referenced_texts or [])], limit=20)
-            referenced_bibtex = _clip_list([str(b) for b in (s.referenced_bibtex or [])], limit=20)
+            metadatas = []
+            for s in chunk_sentences:
+                meta = {
+                    "document_key": document_key,
+                    "page": int(s.page),
+                    "page_section": int(s.page_section) if s.page_section is not None else None,
+                    "sentence_index": int(s.sentence_index),
+                }
 
-            # Chroma enforces that list metadata values are non-empty once present.
-            # So only include these keys when we actually have values.
-            if citation_numbers:
-                meta["citation_numbers"] = citation_numbers
-            if referenced_texts:
-                meta["referenced_texts"] = referenced_texts
-            if referenced_bibtex:
-                meta["referenced_bibtex"] = referenced_bibtex
+                citation_numbers = _clip_list([int(n) for n in (s.citation_numbers or [])])
+                referenced_texts = _clip_list([str(t) for t in (s.referenced_texts or [])], limit=20)
+                referenced_bibtex = _clip_list([str(b) for b in (s.referenced_bibtex or [])], limit=20)
 
-            metadatas.append(meta)
+                # Chroma enforces that list metadata values are non-empty once present.
+                # So only include these keys when we actually have values.
+                if citation_numbers:
+                    meta["citation_numbers"] = citation_numbers
+                if referenced_texts:
+                    meta["referenced_texts"] = referenced_texts
+                if referenced_bibtex:
+                    meta["referenced_bibtex"] = referenced_bibtex
 
-        self.sentences_collection.upsert(
-            ids=ids,
-            documents=documents,
-            embeddings=embeddings,
-            metadatas=metadatas,
-        )
+                metadatas.append(meta)
+
+            self.sentences_collection.upsert(
+                ids=ids,
+                documents=documents,
+                embeddings=chunk_embeddings,
+                metadatas=metadatas,
+            )
 
     def get_sentences(self, document_key: str) -> List[Sentence]:
         result = self.sentences_collection.get(where={"document_key": document_key})
