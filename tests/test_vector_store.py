@@ -2,479 +2,191 @@
 
 import sys
 import os
-
-# Add src to path like main.py does
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 
+# Add src to path like main.py does
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
 from zoterorag.models import Sentence
+from zoterorag.vector_store import VectorStore
 
 
 class TestVectorStore:
-    """Test suite for VectorStore class."""
+    """LanceDB-backed VectorStore behavior tests."""
 
     @pytest.fixture
     def temp_dir(self):
-        """Create a temporary directory for testing."""
         with tempfile.TemporaryDirectory() as tmpdir:
             yield Path(tmpdir)
 
     @pytest.fixture
-    def mock_chroma_client(self):
-        """Mock ChromaDB client."""
-        with patch("zoterorag.vector_store.chromadb.PersistentClient") as mock:
-            mock_client = MagicMock()
-            mock.return_value = mock_client
-            
-            # Mock collections
-            sentences_collection = MagicMock()
-            
-            mock_client.get_collection.return_value = sentences_collection
-            mock_client.create_collection.side_effect = lambda name: (
-                sentences_collection
-            )
-            
-            # Setup count and get methods
-            type(sentences_collection).count = PropertyMock(return_value=0)
-            
-            yield mock_client, sentences_collection
+    def vector_store(self, temp_dir):
+        return VectorStore(persist_directory=str(temp_dir))
 
-    @pytest.fixture
-    def vector_store(self, temp_dir, mock_chroma_client):
-        """Create a VectorStore instance with mocked ChromaDB."""
-        with patch("zoterorag.vector_store.chromadb.PersistentClient"):
-            from zoterorag.vector_store import VectorStore
-            store = VectorStore(persist_directory=str(temp_dir))
-            yield store
+    def _sentence(
+        self,
+        sentence_id: str,
+        document_id: str,
+        text: str,
+        sentence_index: int,
+        page: int = 1,
+        page_section: int | None = 1,
+    ) -> Sentence:
+        return Sentence(
+            id=sentence_id,
+            document_id=document_id,
+            page=page,
+            page_section=page_section,
+            sentence_index=sentence_index,
+            text=text,
+        )
 
-    # --- Test _detect_dimensions ---
+    # --- Dimensions ---
 
-    def test_detect_dimensions_with_existing_embeddings(self, temp_dir):
-        """Test dimension detection when embeddings exist."""
-        with patch("zoterorag.vector_store.chromadb.PersistentClient") as mock:
-            mock_client = MagicMock()
-            mock.return_value = mock_client
+    def test_detected_dimension_empty_store(self, vector_store):
+        assert vector_store.get_detected_dimension() is None
+        assert vector_store.has_dimension_mismatch(1024) is False
 
-            sentences_collection = MagicMock()
+    def test_detected_dimension_after_reload(self, temp_dir):
+        store = VectorStore(persist_directory=str(temp_dir))
+        store.add_sentences(
+            [self._sentence("doc1_sent_0", "doc1", "alpha", 0)],
+            [[0.1, 0.2, 0.3, 0.4]],
+            "doc1",
+        )
 
-            def get_collection_side_effect(name):
-                return sentences_collection
+        reloaded = VectorStore(persist_directory=str(temp_dir))
+        assert reloaded.get_detected_dimension() == 4
+        assert reloaded.has_dimension_mismatch(8) is True
 
-            mock_client.get_collection.side_effect = get_collection_side_effect
+    # --- Add/Get/Search ---
 
-            # Mock embeddings with dimension 384
-            import numpy as np
-            mock_embedding = np.array([0.1] * 384)
+    def test_add_sentences_and_get_sentences(self, vector_store):
+        sentences = [
+            self._sentence("doc1_sent_0", "doc1", "A sentence [1].", 0),
+            self._sentence("doc1_sent_1", "doc1", "Another sentence.", 1),
+        ]
+        sentences[0].citation_numbers = [1]
+        sentences[0].referenced_texts = ["A. Author. Title. 2020."]
+        sentences[0].referenced_bibtex = ["@article{author2020,title={Title}}"]
 
-            sentences_collection.get.return_value = {
-                "ids": ["sent_1"],
-                "embeddings": [mock_embedding],
-            }
+        embeddings = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+        ]
 
-            def get_or_create(name):
-                return sentences_collection
+        vector_store.add_sentences(sentences, embeddings, "doc1")
 
-            mock_client.get_or_create_collection.side_effect = get_or_create
+        out = vector_store.get_sentences("doc1")
+        assert len(out) == 2
+        assert [s.sentence_index for s in out] == [0, 1]
+        assert out[0].citation_numbers == [1]
+        assert out[0].referenced_texts
+        assert out[0].referenced_bibtex
 
-            from zoterorag.vector_store import VectorStore
+    def test_search_sentence_ids_cosine_scores(self, vector_store):
+        vector_store.add_sentences(
+            [
+                self._sentence("a", "doc1", "alpha", 0),
+                self._sentence("b", "doc1", "beta", 1),
+                self._sentence("c", "doc2", "gamma", 0),
+            ],
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0, 0.0],
+            ],
+            "doc1",
+        )
 
-            store = VectorStore(persist_directory=str(temp_dir))
+        # Add doc2 separately so document_key is persisted correctly.
+        vector_store.add_sentences(
+            [self._sentence("c", "doc2", "gamma", 0)],
+            [[1.0, 0.0, 0.0, 0.0]],
+            "doc2",
+        )
 
-            assert store._detected_sentence_dim == 384
+        ids, scores, metas = vector_store.search_sentence_ids(
+            query_embedding=[1.0, 0.0, 0.0, 0.0],
+            document_key="doc1",
+            top_k=2,
+        )
 
-    def test_detect_dimensions_with_empty_collections(self, temp_dir):
-        """Test dimension detection with empty collections."""
-        with patch("zoterorag.vector_store.chromadb.PersistentClient") as mock:
-            mock_client = MagicMock()
-            mock.return_value = mock_client
+        assert ids
+        assert len(ids) == len(scores) == len(metas)
+        assert ids[0] == "a"
+        assert all(-1.0 <= s <= 1.0 for s in scores)
+        assert metas[0]["document_key"] == "doc1"
 
-            sentences_collection = MagicMock()
-            mock_client.get_collection.return_value = sentences_collection
+    def test_get_sentence_texts_by_ids(self, vector_store):
+        vector_store.add_sentences(
+            [
+                self._sentence("x", "doc1", "X text", 0),
+                self._sentence("y", "doc1", "Y text", 1),
+            ],
+            [[1.0, 0.0], [0.0, 1.0]],
+            "doc1",
+        )
 
-            # Empty embeddings
-            sentences_collection.get.return_value = {"ids": [], "embeddings": []}
+        out = vector_store.get_sentence_texts_by_ids(["x", "y", "z"])
+        assert out["x"] == "X text"
+        assert out["y"] == "Y text"
+        assert "z" not in out
 
-            from zoterorag.vector_store import VectorStore
+    def test_get_sentence_metadatas_by_ids(self, vector_store):
+        s = self._sentence("m1", "doc1", "meta", 3, page=2, page_section=None)
+        s.citation_numbers = [2, 5]
+        vector_store.add_sentences([s], [[0.3, 0.7]], "doc1")
 
-            store = VectorStore(persist_directory=str(temp_dir))
+        out = vector_store.get_sentence_metadatas_by_ids(["m1"])
+        assert out["m1"]["document_key"] == "doc1"
+        assert out["m1"]["page"] == 2
+        assert out["m1"]["sentence_index"] == 3
+        assert out["m1"]["citation_numbers"] == [2, 5]
 
-            assert store._detected_sentence_dim is None
+    # --- Embedded doc helpers + cleanup ---
 
-    # --- Test get_detected_dimension ---
+    def test_is_document_embedded(self, vector_store):
+        vector_store.add_sentences(
+            [self._sentence("d1_s0", "doc1", "text", 0)],
+            [[1.0, 0.0]],
+            "doc1",
+        )
+        assert vector_store.is_document_embedded("doc1") is True
+        assert vector_store.is_document_embedded("missing") is False
 
-    def test_get_detected_dimension_returns_stored_value(self, vector_store):
-        """Test that get_detected_dimension returns the detected value."""
-        vector_store._detected_sentence_dim = 768
-        assert vector_store.get_detected_dimension() == 768
-        
-        vector_store._detected_sentence_dim = None
+    def test_delete_document(self, vector_store):
+        vector_store.add_sentences(
+            [self._sentence("d1_s0", "doc1", "text", 0)],
+            [[1.0, 0.0]],
+            "doc1",
+        )
+        assert vector_store.get_sentence_count() == 1
+
+        vector_store.delete_document("doc1")
+        assert vector_store.get_sentence_count() == 0
+
+    def test_clear_all(self, vector_store):
+        vector_store.add_sentences(
+            [self._sentence("d1_s0", "doc1", "text", 0)],
+            [[1.0, 0.0]],
+            "doc1",
+        )
+        vector_store.clear_all()
+
+        assert vector_store.get_sentence_count() == 0
         assert vector_store.get_detected_dimension() is None
 
-    # --- Test has_dimension_mismatch ---
+    def test_embedded_documents_json_roundtrip(self, vector_store):
+        vector_store.save_embedded_documents({"doc1": 12, "doc2": 9})
+        assert vector_store.get_embedded_documents() == {"doc1": 12, "doc2": 9}
 
-    def test_has_dimension_mismatch_returns_true_when_different(self, vector_store):
-        """Test dimension mismatch detection when dimensions differ."""
-        vector_store._detected_sentence_dim = 384
-        assert vector_store.has_dimension_mismatch(768) is True
+        vector_store.update_embedded_document("doc3", 4)
+        assert vector_store.get_embedded_documents()["doc3"] == 4
 
-    def test_has_dimension_mismatch_returns_false_when_same(self, vector_store):
-        """Test dimension mismatch returns false when dimensions match."""
-        vector_store._detected_sentence_dim = 768
-        assert vector_store.has_dimension_mismatch(768) is False
+    def test_get_document_title_compatibility(self, vector_store):
+        assert vector_store.get_document_title("doc1") is None
 
-    def test_has_dimension_mismatch_returns_false_when_no_existing_data(self, vector_store):
-        """Test dimension mismatch returns false when no existing data."""
-        vector_store._detected_sentence_dim = None
-        assert vector_store.has_dimension_mismatch(768) is False
-
-    # --- Test add_sentences ---
-
-    def test_add_sentences_with_valid_data(self, temp_dir):
-        """Test adding sentences with embeddings."""
-        from zoterorag.vector_store import VectorStore
-
-        mock_client = MagicMock()
-        sentences_collection = MagicMock()
-
-        def get_or_create(name):
-            return sentences_collection
-
-        mock_client.get_or_create_collection.side_effect = get_or_create
-        type(sentences_collection).count = PropertyMock(return_value=0)
-
-        with patch("zoterorag.vector_store.chromadb.PersistentClient", return_value=mock_client):
-            store = VectorStore(persist_directory=str(temp_dir))
-
-            sentences = [
-                Sentence(
-                    id="doc_sent_0",
-                    document_id="doc1",
-                    page=1,
-                    page_section=1,
-                    sentence_index=0,
-                    text="This is a sentence.",
-                )
-            ]
-            embeddings = [[0.1] * 384]
-
-            store.add_sentences(sentences, embeddings, "doc1")
-            sentences_collection.upsert.assert_called_once()
-
-    def test_add_sentences_persists_citation_metadata(self, temp_dir):
-        from zoterorag.vector_store import VectorStore
-
-        mock_client = MagicMock()
-        sentences_collection = MagicMock()
-
-        def get_or_create(name):
-            return sentences_collection
-
-        mock_client.get_or_create_collection.side_effect = get_or_create
-        type(sentences_collection).count = PropertyMock(return_value=0)
-
-        with patch("zoterorag.vector_store.chromadb.PersistentClient", return_value=mock_client):
-            store = VectorStore(persist_directory=str(temp_dir))
-
-            sentences = [
-                Sentence(
-                    id="doc_sent_0",
-                    document_id="doc1",
-                    page=1,
-                    page_section=1,
-                    sentence_index=0,
-                    text="This is a sentence [1].",
-                    citation_numbers=[1],
-                    referenced_texts=["A. Author. Title. 2020."],
-                    referenced_bibtex=["@article{author20201, title={Title}}"],
-                )
-            ]
-            embeddings = [[0.1] * 8]
-
-            store.add_sentences(sentences, embeddings, "doc1")
-
-            assert sentences_collection.upsert.called
-            kwargs = sentences_collection.upsert.call_args.kwargs
-            metas = kwargs.get("metadatas")
-            assert isinstance(metas, list) and metas
-            assert metas[0]["citation_numbers"] == [1]
-            assert metas[0]["referenced_texts"]
-            assert metas[0]["referenced_bibtex"]
-
-    def test_add_sentences_skips_empty_citation_lists_in_metadata(self, temp_dir):
-        from zoterorag.vector_store import VectorStore
-
-        mock_client = MagicMock()
-        sentences_collection = MagicMock()
-
-        mock_client.get_or_create_collection.side_effect = lambda name: sentences_collection
-        type(sentences_collection).count = PropertyMock(return_value=0)
-
-        with patch("zoterorag.vector_store.chromadb.PersistentClient", return_value=mock_client):
-            store = VectorStore(persist_directory=str(temp_dir))
-
-            sentences = [
-                Sentence(
-                    id="doc_sent_0",
-                    document_id="doc1",
-                    page=1,
-                    page_section=1,
-                    sentence_index=0,
-                    text="No citations here.",
-                    citation_numbers=[],
-                    referenced_texts=[],
-                    referenced_bibtex=[],
-                )
-            ]
-            embeddings = [[0.1] * 8]
-
-            store.add_sentences(sentences, embeddings, "doc1")
-
-            kwargs = sentences_collection.upsert.call_args.kwargs
-            metas = kwargs["metadatas"]
-            assert "citation_numbers" not in metas[0]
-            assert "referenced_texts" not in metas[0]
-            assert "referenced_bibtex" not in metas[0]
-
-    # --- Test delete_document ---
-
-    def test_delete_document_calls_delete_on_collection(self, temp_dir):
-        """Test that delete_document removes all vectors for a document."""
-        from zoterorag.vector_store import VectorStore
-
-        mock_client = MagicMock()
-        sentences_collection = MagicMock()
-
-        def get_or_create(name):
-            return sentences_collection
-
-        mock_client.get_or_create_collection.side_effect = get_or_create
-        type(sentences_collection).count = PropertyMock(return_value=0)
-
-        with patch("zoterorag.vector_store.chromadb.PersistentClient", return_value=mock_client):
-            store = VectorStore(persist_directory=str(temp_dir))
-            store.delete_document("doc1")
-            sentences_collection.delete.assert_called_once_with(where={"document_key": "doc1"})
-
-    # --- Test get_document_title ---
-
-    def test_get_document_title_returns_title_when_found(self, temp_dir):
-        """Titles are no longer stored in the vector DB."""
-        from zoterorag.vector_store import VectorStore
-
-        with patch("zoterorag.vector_store.chromadb.PersistentClient"):
-            store = VectorStore(persist_directory=str(temp_dir))
-            assert store.get_document_title("doc1") is None
-
-    def test_get_document_title_returns_none_when_not_found(self, temp_dir):
-        """Test that get_document_title returns None when document not found."""
-        from zoterorag.vector_store import VectorStore
-        
-        mock_client = MagicMock()
-        sentences_collection = MagicMock()
-
-        # Empty result
-        sentences_collection.get.return_value = {"metadatas": []}
-
-        mock_client.get_collection.return_value = sentences_collection
-
-        with patch("zoterorag.vector_store.chromadb.PersistentClient", return_value=mock_client):
-            store = VectorStore(persist_directory=str(temp_dir))
-            
-            result = store.get_document_title("nonexistent")
-            
-            assert result is None
-
-    # --- Test get_sentence_count ---
-
-    def test_get_sentence_count_returns_count(self, temp_dir):
-        """Test that get_sentence_count returns the number of sentences."""
-        from zoterorag.vector_store import VectorStore
-
-        mock_client = MagicMock()
-        sentences_collection = MagicMock()
-        type(sentences_collection).count = PropertyMock(return_value=100)
-
-        def get_or_create(name):
-            return sentences_collection
-
-        mock_client.get_or_create_collection.side_effect = get_or_create
-
-        with patch("zoterorag.vector_store.chromadb.PersistentClient", return_value=mock_client):
-            store = VectorStore(persist_directory=str(temp_dir))
-            assert store.get_sentence_count() == 100
-
-    # --- Test persistence directory creation ---
-
-    def test_persist_directory_created_on_init(self, temp_dir):
-        """Test that persist directory is created on initialization."""
-        new_dir = temp_dir / "new_vectordb"
-        
-        with patch("zoterorag.vector_store.chromadb.PersistentClient"):
-            from zoterorag.vector_store import VectorStore
-            store = VectorStore(persist_directory=str(new_dir))
-            
-            assert new_dir.exists()
-            assert new_dir.is_dir()
-
-    # --- Test thread safety ---
-
-    def test_embedded_docs_lock_exists(self, temp_dir):
-        """Test that the lock is created for thread safety."""
-        with patch("zoterorag.vector_store.chromadb.PersistentClient"):
-            from zoterorag.vector_store import VectorStore
-            store = VectorStore(persist_directory=str(temp_dir))
-            
-            assert hasattr(store, "_embedded_docs_lock")
-
-    # --- Test search_sentence_ids ---
-
-    def test_search_sentence_ids_does_not_include_embeddings(self, temp_dir):
-        """Query path should avoid returning embeddings for large-scale search."""
-        from zoterorag.vector_store import VectorStore
-
-        mock_client = MagicMock()
-        sentences_collection = MagicMock()
-
-        def get_or_create(name):
-            return sentences_collection
-
-        mock_client.get_or_create_collection.side_effect = get_or_create
-        type(sentences_collection).count = PropertyMock(return_value=0)
-
-        # dimension detection call
-        sentences_collection.get.return_value = {"ids": [], "embeddings": []}
-
-        sentences_collection.query.return_value = {
-            "ids": [["s1", "s2"]],
-            "distances": [[0.1, 0.2]],
-            "metadatas": [[{"document_key": "d1"}, {"document_key": "d2"}]],
-        }
-
-        with patch("zoterorag.vector_store.chromadb.PersistentClient", return_value=mock_client):
-            store = VectorStore(persist_directory=str(temp_dir))
-            ids, distances, metas = store.search_sentence_ids([0.0, 1.0], top_k=2)
-
-        assert ids == ["s1", "s2"]
-        assert distances == [0.1, 0.2]
-        assert metas[0]["document_key"] == "d1"
-
-        # Ensure embeddings are not requested in query include
-        _, kwargs = sentences_collection.query.call_args
-        assert "include" in kwargs
-        assert "embeddings" not in kwargs["include"]
-        assert "distances" in kwargs["include"]
-
-    def test_get_sentence_texts_by_ids(self, temp_dir):
-        from zoterorag.vector_store import VectorStore
-
-        mock_client = MagicMock()
-        sentences_collection = MagicMock()
-        mock_client.get_or_create_collection.side_effect = lambda name: sentences_collection
-        type(sentences_collection).count = PropertyMock(return_value=0)
-
-        # dimension detection call
-        sentences_collection.get.return_value = {"ids": [], "embeddings": []}
-
-        # get_sentence_texts_by_ids call
-        sentences_collection.get.return_value = {
-            "ids": ["a", "b"],
-            "documents": ["A text", "B text"],
-        }
-
-        with patch("zoterorag.vector_store.chromadb.PersistentClient", return_value=mock_client):
-            store = VectorStore(persist_directory=str(temp_dir))
-            out = store.get_sentence_texts_by_ids(["a", "b"])
-
-        assert out == {"a": "A text", "b": "B text"}
-
-    # --- Test is_document_embedded ---
-
-    def test_is_document_embedded_true_when_ids_exist(self, temp_dir):
-        from zoterorag.vector_store import VectorStore
-
-        mock_client = MagicMock()
-        sentences_collection = MagicMock()
-        mock_client.get_or_create_collection.side_effect = lambda name: sentences_collection
-        type(sentences_collection).count = PropertyMock(return_value=0)
-
-        # dimension detection call
-        sentences_collection.get.return_value = {"ids": [], "embeddings": []}
-
-        # is_document_embedded call
-        def get_side_effect(*args, **kwargs):
-            if kwargs.get("where") == {"document_key": "doc1"}:
-                return {"ids": ["x"]}
-            return {"ids": [], "embeddings": []}
-
-        sentences_collection.get.side_effect = get_side_effect
-
-        with patch("zoterorag.vector_store.chromadb.PersistentClient", return_value=mock_client):
-            store = VectorStore(persist_directory=str(temp_dir))
-            assert store.is_document_embedded("doc1") is True
-
-    def test_is_document_embedded_falls_back_when_limit_unsupported(self, temp_dir):
-        from zoterorag.vector_store import VectorStore
-
-        mock_client = MagicMock()
-        sentences_collection = MagicMock()
-        mock_client.get_or_create_collection.side_effect = lambda name: sentences_collection
-        type(sentences_collection).count = PropertyMock(return_value=0)
-
-        # dimension detection call
-        sentences_collection.get.return_value = {"ids": [], "embeddings": []}
-
-        def get_side_effect(*args, **kwargs):
-            # First call with limit raises TypeError
-            if "limit" in kwargs:
-                raise TypeError("limit unsupported")
-            if kwargs.get("where") == {"document_key": "doc2"}:
-                return {"ids": ["y"]}
-            return {"ids": []}
-
-        sentences_collection.get.side_effect = get_side_effect
-
-        with patch("zoterorag.vector_store.chromadb.PersistentClient", return_value=mock_client):
-            store = VectorStore(persist_directory=str(temp_dir))
-            assert store.is_document_embedded("doc2") is True
-
-    def test_get_sentences_restores_citation_metadata(self, temp_dir):
-        from zoterorag.vector_store import VectorStore
-
-        mock_client = MagicMock()
-        sentences_collection = MagicMock()
-
-        def get_or_create(name):
-            return sentences_collection
-
-        mock_client.get_or_create_collection.side_effect = get_or_create
-        type(sentences_collection).count = PropertyMock(return_value=0)
-
-        sentences_collection.get.return_value = {
-            "ids": ["doc_sent_0"],
-            "documents": ["This is a sentence [1]."],
-            "metadatas": [
-                {
-                    "document_key": "doc1",
-                    "page": 1,
-                    "page_section": 1,
-                    "sentence_index": 0,
-                    "citation_numbers": [1],
-                    "referenced_texts": ["A. Author. Title. 2020."],
-                    "referenced_bibtex": ["@article{author20201, title={Title}}"],
-                }
-            ],
-        }
-
-        with patch("zoterorag.vector_store.chromadb.PersistentClient", return_value=mock_client):
-            store = VectorStore(persist_directory=str(temp_dir))
-            out = store.get_sentences("doc1")
-
-            assert len(out) == 1
-            assert out[0].citation_numbers == [1]
-            assert out[0].referenced_texts
-            assert out[0].referenced_bibtex

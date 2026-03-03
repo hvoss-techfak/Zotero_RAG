@@ -1,14 +1,13 @@
-"""ChromaDB-based vector store with persistence tracking."""
+"""LanceDB-backed vector store with persistence tracking."""
 
 import json
 import logging
 import os
 import threading
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Any
 
-import chromadb
-from chromadb.config import Settings
+import lancedb
 
 from .models import Sentence
 
@@ -16,60 +15,83 @@ logger = logging.getLogger(__name__)
 
 
 class VectorStore:
-    """ChromaDB wrapper for storing and retrieving sentence embeddings."""
+    """LanceDB wrapper for storing and retrieving sentence embeddings."""
+
+    _TABLE_NAME = "sentences"
 
     def __init__(self, persist_directory: str = "./data/vector_store"):
         self.persist_directory = Path(persist_directory)
         self.persist_directory.mkdir(parents=True, exist_ok=True)
 
         self._embedded_docs_lock = threading.Lock()
+        self._table_lock = threading.Lock()
 
-        self.client = chromadb.PersistentClient(
-            path=str(self.persist_directory),
-            settings=Settings(anonymized_telemetry=False),
-        )
+        # Keep Lance artifacts in a dedicated subdirectory.
+        self.db_directory = self.persist_directory / "lancedb"
+        self.db_directory.mkdir(parents=True, exist_ok=True)
+        self.db = lancedb.connect(str(self.db_directory))
 
-        # Single collection: sentences
-        self.sentences_collection = self._get_or_create_collection("sentences")
+        self.sentences_table = self._open_table_if_exists()
+        self._index_ready = False
 
         self._detected_sentence_dim: int | None = None
         self._detect_dimensions()
 
-    def _detect_dimensions(self):
-        """Detect embedding dimensions from existing collections."""
+    def _open_table_if_exists(self):
         try:
-            result = self.sentences_collection.get(limit=1, include=["embeddings"])
-            if result and result.get("embeddings") and result.get("ids"):
-                emb_array = result["embeddings"]
-                if not emb_array or emb_array[0] is None:
-                    return
-                first = emb_array[0]
+            return self.db.open_table(self._TABLE_NAME)
+        except Exception:
+            return None
 
-                # Ignore mocks / placeholder objects that don't represent real embeddings.
-                if type(first).__module__.startswith("unittest."):
-                    return
+    @staticmethod
+    def _sql_quote(value: str) -> str:
+        return value.replace("'", "''")
 
-                dim: int | None = None
-                if hasattr(first, "shape") and getattr(first, "shape", None):
-                    try:
-                        dim = int(first.shape[0])
-                    except Exception:
-                        dim = None
-                elif isinstance(first, list):
-                    dim = len(first)
-                else:
-                    try:
-                        dim = len(first)
-                    except TypeError:
-                        dim = None
+    @classmethod
+    def _where_eq(cls, column: str, value: str) -> str:
+        return f"{column} = '{cls._sql_quote(value)}'"
 
-                if dim and dim > 0:
-                    self._detected_sentence_dim = dim
-                    logger.info(
-                        "Detected existing sentence embedding dimension: %s",
-                        self._detected_sentence_dim,
-                    )
+    @classmethod
+    def _where_in(cls, column: str, values: List[str]) -> str:
+        escaped = ", ".join(f"'{cls._sql_quote(v)}'" for v in values)
+        return f"{column} IN ({escaped})"
 
+    def _ensure_cosine_index(self) -> None:
+        if not self.sentences_table or self._index_ready:
+            return
+        try:
+            self.sentences_table.create_index(
+                metric="cosine",
+                vector_column_name="vector",
+                replace=True,
+                index_type="IVF_FLAT",
+            )
+            self._index_ready = True
+        except Exception as e:
+            # Keep writes resilient even if index creation is temporarily unavailable.
+            logger.debug("Could not create LanceDB cosine index yet: %s", e)
+
+    def _detect_dimensions(self):
+        """Detect embedding dimensions from existing table rows."""
+        if not self.sentences_table:
+            return
+
+        try:
+            rows = self.sentences_table.search().select(["vector"]).limit(1).to_list()
+            if not rows:
+                return
+
+            first = rows[0].get("vector")
+            if not first:
+                return
+
+            dim = len(first)
+            if dim > 0:
+                self._detected_sentence_dim = dim
+                logger.info(
+                    "Detected existing sentence embedding dimension: %s",
+                    self._detected_sentence_dim,
+                )
         except Exception as e:
             logger.debug("Could not detect sentence dimensions: %s", e)
 
@@ -81,20 +103,6 @@ class VectorStore:
         if self._detected_sentence_dim is None:
             return False
         return self._detected_sentence_dim != expected_dim
-
-    def _get_or_create_collection(self, name: str):
-        """Get or create a collection (compatible with older tests/client mocks)."""
-        # Use cosine similarity for the distance metric
-        collection_metadata = {"hnsw:space": "cosine"}
-
-        # Some tests mock `get_or_create_collection`, others mock `get_collection/create_collection`.
-        if hasattr(self.client, "get_or_create_collection"):
-            return self.client.get_or_create_collection(name, metadata=collection_metadata)
-
-        try:
-            return self.client.get_collection(name)
-        except Exception:
-            return self.client.create_collection(name, metadata=collection_metadata)
 
     # --- Document metadata tracking ---
 
@@ -187,91 +195,157 @@ class VectorStore:
             sentences: List of Sentence objects to add.
             embeddings: Corresponding embedding vectors.
             document_key: The document key these sentences belong to.
-            batch_size: Maximum number of items per upsert operation (ChromaDB limit).
+            batch_size: Maximum number of items per add operation.
         """
         if not sentences or not embeddings:
             return
 
-        # Process in chunks to avoid ChromaDB's internal batch size limit
-        for i in range(0, len(sentences), batch_size):
+        n = min(len(sentences), len(embeddings))
+        if n <= 0:
+            return
+        if len(sentences) != len(embeddings):
+            logger.warning(
+                "Sentence/embedding length mismatch (%s vs %s); truncating to %s",
+                len(sentences),
+                len(embeddings),
+                n,
+            )
+
+        def _clip_list(v: list, limit: int = 50) -> list:
+            return list(v[:limit]) if v else []
+
+        for i in range(0, n, batch_size):
             chunk_sentences = sentences[i : i + batch_size]
             chunk_embeddings = embeddings[i : i + batch_size]
 
-            ids = [s.id for s in chunk_sentences]
-            documents = [s.text for s in chunk_sentences]
-
-            def _clip_list(v: list, limit: int = 50) -> list:
-                # Keep metadata bounded to avoid bloating the vector DB.
-                return list(v[:limit]) if v else []
-
-            metadatas = []
-            for s in chunk_sentences:
-                meta = {
-                    "document_key": document_key,
+            rows: list[dict] = []
+            for s, emb in zip(chunk_sentences, chunk_embeddings):
+                row = {
+                    "id": str(s.id),
+                    "vector": [float(x) for x in emb],
+                    "document": str(s.text),
+                    "document_key": str(document_key),
                     "page": int(s.page),
                     "page_section": int(s.page_section) if s.page_section is not None else None,
                     "sentence_index": int(s.sentence_index),
                 }
 
-                citation_numbers = _clip_list([int(n) for n in (s.citation_numbers or [])])
+                citation_numbers = _clip_list([int(num) for num in (s.citation_numbers or [])])
                 referenced_texts = _clip_list([str(t) for t in (s.referenced_texts or [])], limit=20)
                 referenced_bibtex = _clip_list([str(b) for b in (s.referenced_bibtex or [])], limit=20)
 
-                # Chroma enforces that list metadata values are non-empty once present.
-                # So only include these keys when we actually have values.
-                if citation_numbers:
-                    meta["citation_numbers"] = citation_numbers
-                if referenced_texts:
-                    meta["referenced_texts"] = referenced_texts
-                if referenced_bibtex:
-                    meta["referenced_bibtex"] = referenced_bibtex
+                # Keep schema stable by always writing list fields, even when empty.
+                row["citation_numbers"] = citation_numbers
+                row["referenced_texts"] = referenced_texts
+                row["referenced_bibtex"] = referenced_bibtex
 
-                metadatas.append(meta)
+                rows.append(row)
 
-            self.sentences_collection.upsert(
-                ids=ids,
-                documents=documents,
-                embeddings=chunk_embeddings,
-                metadatas=metadatas,
-            )
+            with self._table_lock:
+                if self.sentences_table is None:
+                    self.sentences_table = self.db.create_table(
+                        self._TABLE_NAME,
+                        data=rows,
+                        mode="overwrite",
+                    )
+                    self._detected_sentence_dim = len(rows[0].get("vector") or []) if rows else None
+                else:
+                    ids = [r["id"] for r in rows]
+                    try:
+                        self.sentences_table.delete(self._where_in("id", ids))
+                    except Exception:
+                        # If delete fails, add still proceeds; consumers should dedupe by id if needed.
+                        logger.debug("Could not delete existing ids before add")
+                    self.sentences_table.add(rows)
+
+                self._index_ready = False
+                self._ensure_cosine_index()
 
     def get_sentences(self, document_key: str) -> List[Sentence]:
-        result = self.sentences_collection.get(where={"document_key": document_key})
-        if not result.get("ids"):
+        if not self.sentences_table:
             return []
 
+        try:
+            rows = (
+                self._safe_select(
+                    self.sentences_table.search().where(self._where_eq("document_key", document_key)),
+                    [
+                        "id",
+                        "document",
+                        "document_key",
+                        "page",
+                        "page_section",
+                        "sentence_index",
+                        "citation_numbers",
+                        "referenced_texts",
+                        "referenced_bibtex",
+                    ],
+                )
+                .to_list()
+            )
+        except Exception:
+            return []
+
+        rows.sort(key=lambda r: (int(r.get("page", 1) or 1), int(r.get("sentence_index", 0) or 0)))
+
         out: list[Sentence] = []
-        for i, sid in enumerate(result["ids"]):
-            meta = result["metadatas"][i] or {}
+        for row in rows:
             out.append(
                 Sentence(
-                    id=sid,
-                    document_id=document_key,
-                    page=int(meta.get("page", 1)),
+                    id=str(row.get("id", "")),
+                    document_id=str(row.get("document_key", document_key)),
+                    page=int(row.get("page", 1) or 1),
                     page_section=(
-                        int(meta["page_section"]) if meta.get("page_section") is not None else None
+                        int(row["page_section"]) if row.get("page_section") is not None else None
                     ),
-                    sentence_index=int(meta.get("sentence_index", 0)),
-                    text=result["documents"][i],
+                    sentence_index=int(row.get("sentence_index", 0) or 0),
+                    text=str(row.get("document", "")),
                     is_embedded=True,
-                    citation_numbers=list(meta.get("citation_numbers") or []),
-                    referenced_texts=list(meta.get("referenced_texts") or []),
-                    referenced_bibtex=list(meta.get("referenced_bibtex") or []),
+                    citation_numbers=list(row.get("citation_numbers") or []),
+                    referenced_texts=list(row.get("referenced_texts") or []),
+                    referenced_bibtex=list(row.get("referenced_bibtex") or []),
                 )
             )
         return out
 
     def get_sentence_metadatas_by_ids(self, ids: List[str]) -> dict[str, dict]:
         """Fetch sentence metadatas for a small set of ids."""
-        if not ids:
+        if not ids or not self.sentences_table:
             return {}
-        res = self.sentences_collection.get(ids=ids, include=["metadatas"])
+
         out: dict[str, dict] = {}
-        res_ids = res.get("ids") or []
-        metas = res.get("metadatas") or []
-        for sid, meta in zip(res_ids, metas):
-            if sid:
-                out[str(sid)] = meta or {}
+        for sid in [str(i) for i in ids]:
+            try:
+                row_list = (
+                    self._safe_select(
+                        self.sentences_table.search().where(self._where_eq("id", sid)).limit(1),
+                        [
+                            "id",
+                            "document_key",
+                            "page",
+                            "page_section",
+                            "sentence_index",
+                            "citation_numbers",
+                            "referenced_texts",
+                            "referenced_bibtex",
+                        ],
+                    )
+                    .to_list()
+                )
+            except Exception:
+                continue
+            if not row_list:
+                continue
+            row = row_list[0]
+            out[sid] = {
+                "document_key": row.get("document_key"),
+                "page": row.get("page"),
+                "page_section": row.get("page_section"),
+                "sentence_index": row.get("sentence_index"),
+                "citation_numbers": list(row.get("citation_numbers") or []),
+                "referenced_texts": list(row.get("referenced_texts") or []),
+                "referenced_bibtex": list(row.get("referenced_bibtex") or []),
+            }
         return out
 
     def search_sentences(
@@ -285,13 +359,11 @@ class VectorStore:
         NOTE: For large-scale search you should prefer :meth:`search_sentence_ids` which
         avoids returning embeddings to Python.
         """
-        ids, _distances, _metadatas = self.search_sentence_ids(
+        ids, _scores, _metadatas = self.search_sentence_ids(
             query_embedding=query_embedding,
             document_key=document_key,
             top_k=top_k,
         )
-        # Older callers expected embeddings; returning empty keeps behavior safe and
-        # avoids loading vector payloads into memory.
         return ids, []
 
     def search_sentence_ids(
@@ -303,99 +375,158 @@ class VectorStore:
     ) -> tuple[List[str], List[float], List[dict]]:
         """Search sentence vectors efficiently.
 
-        This method uses Chroma's persistent ANN index and returns only ids + distances
-        (and metadatas). It does *not* include embeddings, so it remains fast and
-        memory-efficient for millions of rows.
-
         Returns:
-            (ids, distances, metadatas)
+            (ids, relevance_scores, metadatas)
         """
-        where = {"document_key": document_key} if document_key else None
-        include: list[
-            str
-        ] = ["distances", "metadatas"]  # keep runtime flexible; chroma expects these keys
-        if include_documents:
-            include.append("documents")
-
-        results = self.sentences_collection.query(
-            query_embeddings=[query_embedding],
-            n_results=max(1, int(top_k)),
-            where=where,
-            include=include,  # type: ignore[arg-type]
-        )
-
-        if not results or not results.get("ids") or not results["ids"][0]:
+        if not self.sentences_table:
             return [], [], []
 
-        ids: list[str] = list(results["ids"][0])
-        distances_raw = results.get("distances")
-        distances: list[float]
-        if distances_raw and distances_raw[0] is not None:
-            distances = [float(d) for d in distances_raw[0]]
-        else:
-            distances = []
+        try:
+            builder: Any = self.sentences_table.search([float(x) for x in query_embedding])
+            builder = builder.metric("cosine")
+            if document_key:
+                builder = builder.where(self._where_eq("document_key", document_key))
 
-        metadatas_raw = results.get("metadatas")
-        metadatas: list[dict]
-        if metadatas_raw and metadatas_raw[0] is not None:
-            metadatas = [m or {} for m in metadatas_raw[0]]
-        else:
-            metadatas = [{} for _ in ids]
+            columns = [
+                "id",
+                "document_key",
+                "page",
+                "page_section",
+                "sentence_index",
+                "citation_numbers",
+                "referenced_texts",
+                "referenced_bibtex",
+            ]
+            if include_documents:
+                columns.append("document")
 
-        return ids, distances, metadatas
+            rows = self._safe_select(
+                builder.limit(max(1, int(top_k))),
+                columns,
+            ).to_list()
+        except Exception:
+            return [], [], []
+
+        ids: list[str] = []
+        scores: list[float] = []
+        metadatas: list[dict] = []
+
+        for row in rows:
+            sid = str(row.get("id", ""))
+            if not sid:
+                continue
+
+            distance = float(row.get("_distance", 1.0))
+            score = max(-1.0, min(1.0, 1.0 - distance))
+
+            meta = {
+                "document_key": row.get("document_key"),
+                "page": row.get("page"),
+                "page_section": row.get("page_section"),
+                "sentence_index": row.get("sentence_index"),
+                "citation_numbers": list(row.get("citation_numbers") or []),
+                "referenced_texts": list(row.get("referenced_texts") or []),
+                "referenced_bibtex": list(row.get("referenced_bibtex") or []),
+            }
+            if include_documents:
+                meta["document"] = str(row.get("document", ""))
+
+            ids.append(sid)
+            scores.append(score)
+            metadatas.append(meta)
+
+        return ids, scores, metadatas
 
     def get_sentence_texts_by_ids(self, ids: List[str]) -> dict[str, str]:
         """Fetch sentence texts for a small set of ids."""
-        if not ids:
+        if not ids or not self.sentences_table:
             return {}
 
-        # Chroma returns lists aligned with the input ids.
-        res = self.sentences_collection.get(ids=ids, include=["documents"])
         out: dict[str, str] = {}
-        res_ids = res.get("ids") or []
-        docs = res.get("documents") or []
-        for sid, doc in zip(res_ids, docs):
-            if sid and doc is not None:
-                out[str(sid)] = str(doc)
+        for sid in [str(i) for i in ids]:
+            try:
+                row_list = (
+                    self._safe_select(
+                        self.sentences_table.search().where(self._where_eq("id", sid)).limit(1),
+                        ["id", "document"],
+                    )
+                    .to_list()
+                )
+            except Exception:
+                continue
+            if not row_list:
+                continue
+            row = row_list[0]
+            doc = row.get("document")
+            if doc is not None:
+                out[sid] = str(doc)
         return out
 
     def is_document_embedded(self, document_key: str) -> bool:
-        """Return True if at least one sentence vector exists for this document.
-
-        This is a DB-backed check (not based on embedded_docs.json), so it keeps
-        working even if the metadata file is stale/corrupted.
-        """
-        if not document_key:
+        """Return True if at least one sentence vector exists for this document."""
+        if not document_key or not self.sentences_table:
             return False
+
         try:
-            res = self.sentences_collection.get(where={"document_key": document_key}, limit=1)
-            ids = res.get("ids") if isinstance(res, dict) else None
-            return bool(ids)
-        except TypeError:
-            # Some mocks/older chroma versions may not support limit; fall back.
-            try:
-                res = self.sentences_collection.get(where={"document_key": document_key})
-                ids = res.get("ids") if isinstance(res, dict) else None
-                return bool(ids)
-            except Exception:
-                return False
+            rows = (
+                self._safe_select(
+                    self.sentences_table.search().where(self._where_eq("document_key", document_key)).limit(1),
+                    ["id"],
+                )
+                .to_list()
+            )
+            return bool(rows)
         except Exception:
             return False
 
     # --- Cleanup ---
 
     def delete_document(self, document_key: str):
-        self.sentences_collection.delete(where={"document_key": document_key})
+        if not self.sentences_table:
+            return
+        try:
+            self.sentences_table.delete(self._where_eq("document_key", document_key))
+        except Exception:
+            logger.debug("Failed to delete document %s from LanceDB", document_key)
 
     def clear_all(self):
-        self.client.delete_collection("sentences")
-        self.sentences_collection = self._get_or_create_collection("sentences")
+        with self._table_lock:
+            try:
+                self.db.drop_table(self._TABLE_NAME)
+            except Exception:
+                pass
+            self.sentences_table = None
+            self._detected_sentence_dim = None
+            self._index_ready = False
 
     def get_sentence_count(self) -> int:
-        cnt = getattr(self.sentences_collection, "count", 0)
-        return cnt() if callable(cnt) else int(cnt)
+        if not self.sentences_table:
+            return 0
+        try:
+            return int(self.sentences_table.count_rows())
+        except Exception:
+            return 0
 
     def get_document_title(self, document_key: str) -> Optional[str]:
         # Titles are no longer stored in the vector DB; keep API for MCP compatibility.
         return None
 
+    def _available_columns(self) -> set[str]:
+        if not self.sentences_table:
+            return set()
+        try:
+            return set(self.sentences_table.schema.names)
+        except Exception:
+            return set()
+
+    def _existing_columns(self, requested: List[str]) -> List[str]:
+        available = self._available_columns()
+        if not available:
+            return requested
+        return [c for c in requested if c in available]
+
+    def _safe_select(self, builder: Any, requested_columns: List[str]) -> Any:
+        columns = self._existing_columns(requested_columns)
+        if columns:
+            return builder.select(columns)
+        return builder
