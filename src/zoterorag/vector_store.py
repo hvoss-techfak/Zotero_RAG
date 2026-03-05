@@ -20,7 +20,7 @@ class VectorStore:
     """LanceDB wrapper for storing and retrieving sentence embeddings."""
 
     _TABLE_NAME = "sentences"
-    _SUPPORTED_INDEX_TYPES = {"IVF_HNSW_SQ","IVF_RQ","IVF_PQ"}
+    _SUPPORTED_INDEX_TYPES = {"IVF_HNSW_SQ", "IVF_RQ", "IVF_PQ", "IVF_FLAT"}
 
     def __init__(self, persist_directory: str = "./data/vector_store"):
         self.persist_directory = Path(persist_directory)
@@ -40,6 +40,7 @@ class VectorStore:
 
         self._detected_sentence_dim: int | None = None
         self._detect_dimensions()
+        self.index_lock = threading.Lock()
 
 
     def _open_table_if_exists(self):
@@ -73,30 +74,39 @@ class VectorStore:
         logger.info("Using LanceDB index type: %s", index_type)
         return index_type
 
-    def _ensure_cosine_index(self) -> None:
-        if not self.sentences_table or self._index_ready:
-            try:
-                self.sentences_table.optimize()
-            except Exception as e:
-                logger.debug("Could not optimize LanceDB table: %s", e)
-        try:
-            #check if there is already an index on the vector column
-            existing_indexes = self.sentences_table.list_indices()
-            for idx in existing_indexes:
-                if "vector" in idx.columns and idx.name == "vector_idx":
-                    self._index_ready = True
-                    return
+    def _refresh_table_handle(self) -> None:
+        """Reopen table to observe the latest committed version from disk."""
+        with self._table_lock:
+            self.sentences_table = self._open_table_if_exists()
 
-            self.sentences_table.create_index(
-                metric="cosine",
-                vector_column_name="vector",
-                replace=False,
-                index_type=self._index_type,
-            )
-            self._index_ready = True
-        except Exception as e:
-            logger.debug("Could not create LanceDB cosine index yet: %s", e)
-            logger.debug("Probably the table is not ready; it will be retried on next add/search.")
+    def _ensure_cosine_index(self) -> None:
+        try:
+            self.index_lock.acquire_lock()
+            if not self.sentences_table or self._index_ready:
+                try:
+                    self.sentences_table.optimize()
+                except Exception as e:
+                    logger.debug("Could not optimize LanceDB table: %s", e)
+            try:
+                #check if there is already an index on the vector column
+                existing_indexes = self.sentences_table.list_indices()
+                for idx in existing_indexes:
+                    if "vector" in idx.columns and idx.name == "vector_idx":
+                        self._index_ready = True
+                        return
+
+                self.sentences_table.create_index(
+                    metric="cosine",
+                    vector_column_name="vector",
+                    replace=False,
+                    index_type=self._index_type,
+                )
+                self._index_ready = True
+            except Exception as e:
+                logger.debug("Could not create LanceDB cosine index yet: %s", e)
+                logger.debug("Probably the table is not ready; it will be retried on next add/search.")
+        finally:
+            self.index_lock.release_lock()
 
 
     def _detect_dimensions(self):
@@ -287,6 +297,7 @@ class VectorStore:
                     self.sentences_table.add(rows)
 
         self._ensure_cosine_index()
+        self._refresh_table_handle()
 
     def get_sentences(self, document_key: str) -> List[Sentence]:
         if not self.sentences_table:
@@ -408,8 +419,9 @@ class VectorStore:
         if not self.sentences_table:
             return [], [], []
 
-        self._ensure_cosine_index()
-        try:
+        #self._ensure_cosine_index()
+
+        def _execute_query() -> list[dict]:
             builder: Any = self.sentences_table.search([float(x) for x in query_embedding])
             builder = builder.metric("cosine")
             if document_key:
@@ -428,12 +440,23 @@ class VectorStore:
             if include_documents:
                 columns.append("document")
 
-            rows = self._safe_select(
+            return self._safe_select(
                 builder.limit(max(1, int(top_k))),
                 columns,
             ).to_list()
+
+        rows: list[dict]
+        try:
+            rows = _execute_query()
         except Exception:
-            return [], [], []
+            # A long-lived table handle can lag behind latest writes; refresh and retry once.
+            self._refresh_table_handle()
+            if not self.sentences_table:
+                return [], [], []
+            try:
+                rows = _execute_query()
+            except Exception:
+                return [], [], []
 
         ids: list[str] = []
         scores: list[float] = []
@@ -514,6 +537,7 @@ class VectorStore:
             return
         try:
             self.sentences_table.delete(self._where_eq("document_key", document_key))
+            self._refresh_table_handle()
         except Exception:
             logger.debug("Failed to delete document %s from LanceDB", document_key)
 

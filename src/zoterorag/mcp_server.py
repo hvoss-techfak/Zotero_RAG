@@ -126,6 +126,8 @@ class MCPZoteroServer:
             citation_return_mode=citation_return_mode,
         )
 
+        logger.debug(f"Initial search returned {len(results)} results before filtering")
+
         if require_cited_bibtex:
             before = len(results)
             results = [r for r in results if getattr(r, "cited_bibtex", None)]

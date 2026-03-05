@@ -35,6 +35,7 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             const topSentences = document.getElementById('top-sentences').value;
             const minRelevance = minRelevanceInput.value;
+            const requireCitedBibtex = document.getElementById('require-cited-bibtex').checked;
 
             const response = await fetch('/api/search', {
                 method: 'POST',
@@ -44,7 +45,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 body: JSON.stringify({
                     query: query,
                     top_sentences: parseInt(topSentences),
-                    min_relevance: parseFloat(minRelevance)
+                    min_relevance: parseFloat(minRelevance),
+                    require_cited_bibtex: requireCitedBibtex
                 })
             });
 

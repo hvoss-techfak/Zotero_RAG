@@ -131,6 +131,37 @@ h1 {
     width: 100px;
 }
 
+/* Tooltip */
+.tooltip {
+    position: relative;
+    cursor: help;
+}
+
+.tooltip .tooltiptext {
+    visibility: hidden;
+    width: 250px;
+    background-color: #334155;
+    color: #fff;
+    text-align: left;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    position: absolute;
+    z-index: 1;
+    bottom: 125%;
+    left: 50%;
+    margin-left: -125px;
+    opacity: 0;
+    transition: opacity 0.3s;
+    font-size: 0.8rem;
+    font-weight: normal;
+    line-height: 1.4;
+}
+
+.tooltip:hover .tooltiptext {
+    visibility: visible;
+    opacity: 1;
+}
+
 /* Loading */
 #loading {
     text-align: center;

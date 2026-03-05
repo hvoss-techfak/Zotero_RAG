@@ -54,6 +54,7 @@ def search():
     
     top_sentences = int(data.get("top_sentences", 10))
     min_relevance = float(data.get("min_relevance", 0.75))
+    require_cited_bibtex = data.get("require_cited_bibtex", False)
     
     try:
         # Get the server instance and call search directly
@@ -67,7 +68,7 @@ def search():
             top_sentences=top_sentences,
             min_relevance=min_relevance,
             citation_return_mode="both",  # Get both text and citations
-            require_cited_bibtex=False,
+            require_cited_bibtex=require_cited_bibtex,
         ))
         
         return jsonify({

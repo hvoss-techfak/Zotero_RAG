@@ -11,6 +11,7 @@ from .models import SearchResult, CitationReturnMode
 from .vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Set to DEBUG for detailed tracing
 
 
 class SearchEngine:
@@ -96,7 +97,11 @@ class SearchEngine:
         # Keep signature compatibility; top_sections is currently unused in sentence-only mode.
         _ = top_sections
 
+        logger.debug("Embedding query: %s", query)
+
         query_embedding = self._get_query_embedding(query)
+
+        logger.debug("Searching query: %s", query_embedding)
 
         # Ask the vector DB for the best matches; do NOT ask for embeddings.
         ids, distances, metadatas = self.vector_store.search_sentence_ids(
@@ -128,9 +133,6 @@ class SearchEngine:
             # Shape the result text.
             if citation_return_mode == "bibtex":
                 shaped_text = "\n\n".join([b for b in cited_bibtex if b])
-            elif citation_return_mode == "both":
-                bib = "\n\n".join([b for b in cited_bibtex if b])
-                shaped_text = text if not bib else f"{text}\n\n---\n\n{bib}"
             else:
                 shaped_text = text
 
