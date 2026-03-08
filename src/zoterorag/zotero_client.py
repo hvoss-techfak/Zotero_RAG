@@ -19,33 +19,36 @@ logger = logging.getLogger(__name__)
 
 class ZoteroLocalAPIError(Exception):
     """Raised when the local Zotero API is not available."""
+
     pass
 
 
 class ZoteroClient:
     """Client for interacting with the local Zotero API.
-    
+
     Supports accessing items from both user library and group libraries.
     """
 
     # Local API version
     API_VERSION = 3
-    
+
     def __init__(self, api_url: str | None = None, api_key: str | None = None):
-        self.api_url = (api_url or config.ZOTERO_API_URL).rstrip('/')
+        self.api_url = (api_url or config.ZOTERO_API_URL).rstrip("/")
         self.session = requests.Session()
-        
+
         # Set required headers for local API
-        self.session.headers.update({
-            "Zotero-API-Version": str(self.API_VERSION),
-            "Zotero-Allowed-Request": "1",
-        })
-        
+        self.session.headers.update(
+            {
+                "Zotero-API-Version": str(self.API_VERSION),
+                "Zotero-Allowed-Request": "1",
+            }
+        )
+
         # Use provided key, then config key, otherwise empty for local connector
         key = api_key or config.ZOTERO_API_KEY
         if key:
             self.session.headers.update({"Zotero-API-Key": key})
-            
+
         # Cache for groups
         self._groups: list[dict] | None = None
 
@@ -67,13 +70,13 @@ class ZoteroClient:
 
     def get_groups(self) -> list[dict]:
         """Fetch all groups for the current user.
-        
+
         Returns:
             List of group dictionaries with 'id' and 'data' keys
         """
         if self._groups is not None:
             return self._groups
-            
+
         url = f"{self.api_url}/api/users/0/groups"
         response = self.session.get(url)
         response.raise_for_status()
@@ -82,7 +85,7 @@ class ZoteroClient:
 
     def get_group_ids(self) -> list[int]:
         """Get all group IDs for the current user.
-        
+
         Returns:
             List of group IDs
         """
@@ -91,11 +94,11 @@ class ZoteroClient:
 
     def get_items(self, limit: int = 100, start: int = 0) -> list[dict]:
         """Fetch items from the user's Zotero library.
-        
+
         Args:
             limit: Maximum number of items to return
             start: Starting offset for pagination
-            
+
         Returns:
             List of item dictionaries
         """
@@ -105,14 +108,16 @@ class ZoteroClient:
         response.raise_for_status()
         return response.json()
 
-    def get_group_items(self, group_id: int, limit: int = 100, start: int = 0) -> list[dict]:
+    def get_group_items(
+        self, group_id: int, limit: int = 100, start: int = 0
+    ) -> list[dict]:
         """Fetch items from a specific group's library.
-        
+
         Args:
             group_id: The group ID
             limit: Maximum number of items to return
             start: Starting offset for pagination
-            
+
         Returns:
             List of item dictionaries
         """
@@ -122,13 +127,15 @@ class ZoteroClient:
         response.raise_for_status()
         return response.json()
 
-    def _get_total_items(self, is_group: bool = False, group_id: int | None = None) -> int:
+    def _get_total_items(
+        self, is_group: bool = False, group_id: int | None = None
+    ) -> int:
         """Get total item count for pagination.
-        
+
         Args:
             is_group: Whether to query group library
             group_id: The group ID (required if is_group is True)
-            
+
         Returns:
             Total number of items or 0 if unknown
         """
@@ -149,7 +156,7 @@ class ZoteroClient:
         total = self._get_total_items(is_group=False)
         start = 0
         limit = 100
-        
+
         while True:
             if total > 0 and start >= total:
                 break
@@ -165,7 +172,7 @@ class ZoteroClient:
             total = self._get_total_items(is_group=True, group_id=group_id)
             start = 0
             limit = 100
-            
+
             while True:
                 if total > 0 and start >= total:
                     break
@@ -177,22 +184,22 @@ class ZoteroClient:
 
     def get_all_items_from_all_libraries(self) -> Generator[dict, None, None]:
         """Fetch all items from user library and all group libraries.
-        
+
         Yields:
             Item dictionaries from user library first, then each group
         """
         # First yield user's own items
         yield from self.get_all_items()
-        
+
         # Then yield items from each group
         yield from self.get_all_group_items()
 
     def get_item(self, item_key: str) -> dict:
         """Fetch a specific item by key from user library.
-        
+
         Args:
             item_key: The item key
-            
+
         Returns:
             Item dictionary
         """
@@ -203,11 +210,11 @@ class ZoteroClient:
 
     def get_group_item(self, group_id: int, item_key: str) -> dict:
         """Fetch a specific item by key from a group's library.
-        
+
         Args:
             group_id: The group ID
             item_key: The item key
-            
+
         Returns:
             Item dictionary
         """
@@ -218,7 +225,7 @@ class ZoteroClient:
 
     def get_collections(self) -> list[dict]:
         """Fetch all collections from the user's library.
-        
+
         Returns:
             List of collection dictionaries
         """
@@ -229,10 +236,10 @@ class ZoteroClient:
 
     def get_group_collections(self, group_id: int) -> list[dict]:
         """Fetch all collections from a group's library.
-        
+
         Args:
             group_id: The group ID
-            
+
         Returns:
             List of collection dictionaries
         """
@@ -243,59 +250,61 @@ class ZoteroClient:
 
     def get_collection_items(self, collection_key: str) -> Generator[dict, None, None]:
         """Fetch all items in a specific collection from user library.
-        
+
         Args:
             collection_key: The key of the collection
-            
+
         Yields:
             Items belonging to the collection
         """
         url = f"{self.api_url}/api/users/0/collections/{collection_key}/items"
         start = 0
         limit = 100
-        
+
         while True:
             params = {"limit": limit, "start": start}
             response = self.session.get(url, params=params)
             response.raise_for_status()
             items = response.json()
-            
+
             if not items:
                 break
-                
+
             yield from items
-            
+
             # Check if there are more items (local API returns totalResults in header)
             total = int(response.headers.get("Total-Results", 0))
             start += limit
             if start >= total:
                 break
 
-    def get_group_collection_items(self, group_id: int, collection_key: str) -> Generator[dict, None, None]:
+    def get_group_collection_items(
+        self, group_id: int, collection_key: str
+    ) -> Generator[dict, None, None]:
         """Fetch all items in a specific collection from a group's library.
-        
+
         Args:
             group_id: The group ID
             collection_key: The key of the collection
-            
+
         Yields:
             Items belonging to the collection
         """
         url = f"{self.api_url}/api/groups/{group_id}/collections/{collection_key}/items"
         start = 0
         limit = 100
-        
+
         while True:
             params = {"limit": limit, "start": start}
             response = self.session.get(url, params=params)
             response.raise_for_status()
             items = response.json()
-            
+
             if not items:
                 break
-                
+
             yield from items
-            
+
             # Check if there are more items (local API returns totalResults in header)
             total = int(response.headers.get("Total-Results", 0))
             start += limit
@@ -304,10 +313,10 @@ class ZoteroClient:
 
     def get_file_url(self, item_key: str) -> str | None:
         """Get the download URL for an item's PDF file from user library.
-        
+
         Args:
             item_key: The item key
-            
+
         Returns:
             File URL or None if not available
         """
@@ -317,32 +326,42 @@ class ZoteroClient:
             response = self.session.get(url)
             if response.status_code != 200:
                 return None
-            
+
             item = response.json()
-            
+
             # Check for attachments in data.links (v3 API format)
             data = item.get("data", {})
-            
+
             # Handle standalone PDF attachment - this IS the file itself
-            if data.get("itemType") == "attachment" and data.get("contentType") == "application/pdf":
+            if (
+                data.get("itemType") == "attachment"
+                and data.get("contentType") == "application/pdf"
+            ):
                 return f"{self.api_url}/api/users/0/items/{item_key}/file"
-            
+
             links = data.get("links", {})
             attachment_link = links.get("attachment", {})
             href = attachment_link.get("href", "")
-            
+
             if href and ".pdf" in href.lower():
                 # Return the file endpoint URL
-                key_part = href.split("/items/")[-1].split("/")[0] if "/items/" in href else None
+                key_part = (
+                    href.split("/items/")[-1].split("/")[0]
+                    if "/items/" in href
+                    else None
+                )
                 if key_part:
                     return f"{self.api_url}/api/users/0/items/{key_part}/file"
-            
+
             # Check for children attachments (embedded files)
             children = data.get("children", [])
             for child in children:
                 if child.get("itemType") == "attachment":
                     content_type = child.get("contentType", "")
-                    if content_type == "application/pdf" or ".pdf" in str(child.get("filename", "")).lower():
+                    if (
+                        content_type == "application/pdf"
+                        or ".pdf" in str(child.get("filename", "")).lower()
+                    ):
                         return f"{self.api_url}/api/users/0/items/{child['key']}/file"
 
             # Check v2 format: data.attachments array
@@ -350,7 +369,9 @@ class ZoteroClient:
             for att in attachments:
                 content_type = att.get("contentType", "")
                 filename = att.get("filename", "") or att.get("path", "")
-                if content_type == "application/pdf" or (filename and ".pdf" in filename.lower()):
+                if content_type == "application/pdf" or (
+                    filename and ".pdf" in filename.lower()
+                ):
                     return f"{self.api_url}/api/users/0/items/{att['key']}/file"
 
             # Check v3 format: data.meta.attachments or item.meta.attachments
@@ -360,19 +381,19 @@ class ZoteroClient:
                 for att in meta_attachments:
                     if att.get("contentType") == "application/pdf":
                         return f"{self.api_url}/api/users/0/items/{att['key']}/file"
-                        
+
         except requests.RequestException:
             pass
-            
+
         return None
 
     def get_group_file_url(self, group_id: int, item_key: str) -> str | None:
         """Get the download URL for an item's PDF file from a group's library.
-        
+
         Args:
             group_id: The group ID
             item_key: The item key
-            
+
         Returns:
             File URL or None if not available
         """
@@ -381,31 +402,41 @@ class ZoteroClient:
             response = self.session.get(url)
             if response.status_code != 200:
                 return None
-            
+
             item = response.json()
-            
+
             # Check for attachments in data.links (v3 API format)
             data = item.get("data", {})
-            
+
             # Handle standalone PDF attachment - this IS the file itself
-            if data.get("itemType") == "attachment" and data.get("contentType") == "application/pdf":
+            if (
+                data.get("itemType") == "attachment"
+                and data.get("contentType") == "application/pdf"
+            ):
                 return f"{self.api_url}/api/groups/{group_id}/items/{item_key}/file"
-            
+
             links = data.get("links", {})
             attachment_link = links.get("attachment", {})
             href = attachment_link.get("href", "")
-            
+
             if href and ".pdf" in href.lower():
-                key_part = href.split("/items/")[-1].split("/")[0] if "/items/" in href else None
+                key_part = (
+                    href.split("/items/")[-1].split("/")[0]
+                    if "/items/" in href
+                    else None
+                )
                 if key_part:
                     return f"{self.api_url}/api/groups/{group_id}/items/{key_part}/file"
-            
+
             # Check for children attachments (PDFs attached to regular items)
             children = data.get("children", [])
             for child in children:
                 if child.get("itemType") == "attachment":
                     content_type = child.get("contentType", "")
-                    if content_type == "application/pdf" or ".pdf" in str(child.get("filename", "")).lower():
+                    if (
+                        content_type == "application/pdf"
+                        or ".pdf" in str(child.get("filename", "")).lower()
+                    ):
                         return f"{self.api_url}/api/groups/{group_id}/items/{child['key']}/file"
 
             # Check v2 format: data.attachments array
@@ -413,29 +444,33 @@ class ZoteroClient:
             for att in attachments:
                 content_type = att.get("contentType", "")
                 filename = att.get("filename", "") or att.get("path", "")
-                if content_type == "application/pdf" or (filename and ".pdf" in filename.lower()):
-                    return f"{self.api_url}/api/groups/{group_id}/items/{att['key']}/file"
+                if content_type == "application/pdf" or (
+                    filename and ".pdf" in filename.lower()
+                ):
+                    return (
+                        f"{self.api_url}/api/groups/{group_id}/items/{att['key']}/file"
+                    )
 
-            # Check v3 format: data.meta.attachments or item.meta.attachments  
+            # Check v3 format: data.meta.attachments or item.meta.attachments
             meta = data.get("meta") or item.get("meta", {})
             if meta:
                 meta_attachments = meta.get("attachments", [])
                 for att in meta_attachments:
                     if att.get("contentType") == "application/pdf":
                         return f"{self.api_url}/api/groups/{group_id}/items/{att['key']}/file"
-                        
+
         except requests.RequestException:
             pass
-            
+
         return None
 
     def download_pdf(self, item_key: str, save_path: Path) -> bool:
         """Download the PDF file for an item from user library.
-        
+
         Args:
             item_key: The Zotero item key
             save_path: Where to save the PDF
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -453,10 +488,10 @@ class ZoteroClient:
 
     def get_pdf_bytes(self, item_key: str) -> bytes | None:
         """Get PDF content as bytes for an item from user library.
-        
+
         Args:
             item_key: The Zotero item key
-            
+
         Returns:
             PDF content as bytes, or None if not available
         """
@@ -496,23 +531,23 @@ class ZoteroClient:
 
     def _read_local_pdf(self, source_path: str) -> bytes | None:
         """Read a local PDF file.
-        
+
         Args:
             source_path: The absolute path from Zotero's file:// URL (URL-encoded)
-            
+
         Returns:
             File content as bytes, or None if not available
         """
         from urllib.parse import unquote
-        
+
         # Decode URL-encoded path
         decoded_path = unquote(source_path)
         source = Path(decoded_path)
-        
+
         if not source.exists():
             logger.warning(f"Local PDF not found: {decoded_path}")
             return None
-        
+
         try:
             return source.read_bytes()
         except OSError as e:
@@ -524,15 +559,18 @@ class ZoteroClient:
         # Check if it's an attachment with PDF content type (standalone attachment)
         if data.get("itemType") == "attachment":
             return data.get("contentType") == "application/pdf"
-        
+
         # Check for children attachments (embedded files in regular items)
         children = data.get("children", [])
         for child in children:
             if child.get("itemType") == "attachment":
                 content_type = child.get("contentType", "")
-                if content_type == "application/pdf" or ".pdf" in str(child.get("filename", "")).lower():
+                if (
+                    content_type == "application/pdf"
+                    or ".pdf" in str(child.get("filename", "")).lower()
+                ):
                     return True
-        
+
         # Check links.attachment (v3 API format)
         links = data.get("links", {})
         attachment_link = links.get("attachment", {})
@@ -545,38 +583,45 @@ class ZoteroClient:
         for att in attachments:
             content_type = att.get("contentType", "")
             filename = att.get("filename", "") or att.get("path", "")
-            if content_type == "application/pdf" or (filename and ".pdf" in filename.lower()):
+            if content_type == "application/pdf" or (
+                filename and ".pdf" in filename.lower()
+            ):
                 return True
-        
+
         # Check v3 format: data.meta.attachments array
         meta = data.get("meta", {})
         meta_attachments = meta.get("attachments", [])
         for att in meta_attachments:
             if att.get("contentType") == "application/pdf":
                 return True
-                
+
         return False
 
     def _find_pdf_key(self, data: dict) -> str | None:
         """Find the key of a PDF attachment for this item."""
         # Check if THIS item is a standalone PDF attachment
-        if data.get("itemType") == "attachment" and data.get("contentType") == "application/pdf":
+        if (
+            data.get("itemType") == "attachment"
+            and data.get("contentType") == "application/pdf"
+        ):
             return data.get("key")
-        
+
         # Check children attachments (for regular items with PDF children)
         children = data.get("children", [])
         for child in children:
             if child.get("itemType") == "attachment":
                 content_type = child.get("contentType", "")
                 filename = child.get("filename", "")
-                if content_type == "application/pdf" or str(filename).lower().endswith(".pdf"):
+                if content_type == "application/pdf" or str(filename).lower().endswith(
+                    ".pdf"
+                ):
                     return child.get("key")
-                    
+
         # Check links.attachment (v3 format)
         links = data.get("links", {})
         attachment_link = links.get("attachment", {})
         href = attachment_link.get("href", "")
-        
+
         # Extract key from URL like http://zotero.org/users/xxx/items/YYY/file
         if "items/" in href:
             parts = href.split("items/")
@@ -589,7 +634,9 @@ class ZoteroClient:
         for att in attachments:
             content_type = att.get("contentType", "")
             filename = att.get("filename", "") or att.get("path", "")
-            if content_type == "application/pdf" or (filename and ".pdf" in filename.lower()):
+            if content_type == "application/pdf" or (
+                filename and ".pdf" in filename.lower()
+            ):
                 return att.get("key")
 
         # Check v3 format: data.meta.attachments array
@@ -598,7 +645,7 @@ class ZoteroClient:
         for att in meta_attachments:
             if att.get("contentType") == "application/pdf":
                 return att.get("key")
-                
+
         return None
 
     def get_documents_with_pdfs(self) -> Generator[Document, None, None]:
@@ -608,13 +655,13 @@ class ZoteroClient:
             doc = self.parse_item_to_document(item)
             if doc:
                 yield doc
-        
+
         # Then process each group's library using pagination
         for group_id in self.get_group_ids():
             total = self._get_total_items(is_group=True, group_id=group_id)
             start = 0
             limit = 100
-            
+
             while True:
                 if total > 0 and start >= total:
                     break
@@ -632,11 +679,11 @@ class ZoteroClient:
 
     def get_group_pdf_bytes(self, group_id: int, item_key: str) -> bytes | None:
         """Get PDF content as bytes for an item from a group's library.
-        
+
         Args:
             group_id: The group ID
             item_key: The Zotero item key
-            
+
         Returns:
             PDF content as bytes, or None if not available
         """
@@ -675,108 +722,117 @@ class ZoteroClient:
 
     def download_pdf_for_doc(self, document: Document) -> bool:
         """Download PDF for a document. Supports both user and group libraries.
-        
+
         Args:
             document: The Document to download
-            
+
         Returns:
             True if successful, False otherwise
         """
         pdf_key = document.zotero_key
-        
+
         # Check if already downloaded
         if document.pdf_path and document.pdf_path.exists():
             return True
-        
+
         try:
             # Use group-specific or user method
             if document.group_id is not None:
                 pdf_bytes = self.get_group_pdf_bytes(document.group_id, pdf_key)
             else:
                 pdf_bytes = self.get_pdf_bytes(pdf_key)
-            
+
             if pdf_bytes is None:
                 return False
-            
+
             # Save to pdf_path
             save_path = document.pdf_path or config.PDF_CACHE_PATH / f"{pdf_key}.pdf"
             save_path.parent.mkdir(parents=True, exist_ok=True)
-            
+
             with open(save_path, "wb") as f:
                 f.write(pdf_bytes)
-            
+
             # Update document's pdf_path
             document.pdf_path = save_path
             return True
-            
+
         except (requests.RequestException, OSError) as e:
             logger.warning(f"Failed to download PDF {pdf_key}: {e}")
             return False
 
     def _copy_local_pdf(self, source_path: str, document: Document) -> bool:
         """Copy a local file:// URL path to the cache directory.
-        
+
         Args:
             source_path: The absolute path from Zotero's file:// URL (URL-encoded)
             document: The Document to update with pdf_path
-            
+
         Returns:
             True if successful, False otherwise
         """
         import shutil
         from urllib.parse import unquote
-        
+
         # Decode URL-encoded path (Zotero returns e.g. %20 for space, %E2%80%93 for en-dash)
         decoded_path = unquote(source_path)
-        
+
         source = Path(decoded_path)
-        
+
         # Check if the file exists at the given path
         if not source.exists():
             logger.warning(f"Local PDF not found: {decoded_path}")
             return False
-        
+
         try:
-            save_path = document.pdf_path or config.PDF_CACHE_PATH / f"{document.zotero_key}.pdf"
+            save_path = (
+                document.pdf_path
+                or config.PDF_CACHE_PATH / f"{document.zotero_key}.pdf"
+            )
             save_path.parent.mkdir(parents=True, exist_ok=True)
-            
+
             # Copy the file to our cache
             shutil.copy2(source, save_path)
-            
+
             # Update document's pdf_path
             document.pdf_path = save_path
             logger.info(f"Copied PDF from {source} to {save_path}")
             return True
-            
+
         except OSError as e:
             logger.warning(f"Failed to copy PDF from {source}: {e}")
             return False
 
-    def parse_item_to_document(self, item: dict, group_id: int | None = None) -> Document | None:
+    def parse_item_to_document(
+        self, item: dict, group_id: int | None = None
+    ) -> Document | None:
         """Parse a Zotero API item into a Document model."""
         data = item.get("data", {})
-        
+
         # Only process items with PDFs
         if not self._has_pdf(data):
             return None
-        
+
         # Get title - for standalone attachments use filename as fallback
         title = data.get("title", "")
         if not title or title == "Full Text":
             title = data.get("filename", "Untitled")
-        
-        authors = [a.get("firstName", "") + " " + a.get("lastName", "").strip() 
-                   for a in data.get("creators", [])]
-        
+
+        authors = [
+            a.get("firstName", "") + " " + a.get("lastName", "").strip()
+            for a in data.get("creators", [])
+        ]
+
         # Get PDF key and path - use the item's own key if it's an attachment
         pdf_key = self._find_pdf_key(data)
         pdf_path = None
         if pdf_key:
             pdf_path = config.PDF_CACHE_PATH / f"{pdf_key}.pdf"
-        
+
         # For standalone attachments, also store parent item key for metadata lookup
-        parent_item_key = data.get("parentItem") if data.get("itemType") == "attachment" else None
-        
+        parent_item_key = (
+            data.get("parentItem") if data.get("itemType") == "attachment" else None
+        )
+
         return Document(
             zotero_key=pdf_key or item.get("key", ""),
             title=title,
@@ -800,7 +856,9 @@ class ZoteroClient:
             return f"{self.api_url}/api/users/0/items/{item_key}/file"
         return f"{self.api_url}/api/groups/{group_id}/items/{item_key}/file"
 
-    def get_item_any_library(self, item_key: str, group_id: int | None = None) -> tuple[dict | None, int | None]:
+    def get_item_any_library(
+        self, item_key: str, group_id: int | None = None
+    ) -> tuple[dict | None, int | None]:
         """Fetch an item, optionally trying user and then all known groups.
 
         Returns (item_json, resolved_group_id). resolved_group_id None means user library.
@@ -860,14 +918,18 @@ class ZoteroClient:
 
         return current_key, current_gid
 
-    def get_item_metadata(self, item_key: str, group_id: int | None = None) -> dict | None:
+    def get_item_metadata(
+        self, item_key: str, group_id: int | None = None
+    ) -> dict | None:
         """Get full metadata for an item including BibTeX and file info.
 
         Traverses the parent chain to find bibliographic metadata. Works for both
         user and group libraries.
         """
         # First, resolve to the bibliographic parent (if any)
-        resolved_key, resolved_gid = self.resolve_parent_item_key(item_key, group_id=group_id)
+        resolved_key, resolved_gid = self.resolve_parent_item_key(
+            item_key, group_id=group_id
+        )
 
         # Fetch the resolved item
         item, resolved_gid = self.get_item_any_library(resolved_key, resolved_gid)
@@ -898,7 +960,7 @@ class ZoteroClient:
 
     def get_total_items_count(self) -> int:
         """Get the total number of items in the user's library.
-        
+
         Returns:
             Total count or -1 if unknown
         """
@@ -914,10 +976,10 @@ class ZoteroClient:
 
     def get_item_by_key(self, item_key: str) -> dict | None:
         """Get a single item by its key from user library.
-        
+
         Args:
             item_key: The Zotero item key
-            
+
         Returns:
             Item data or None if not found
         """
@@ -932,10 +994,10 @@ class ZoteroClient:
 
     def get_items_since(self, since: int) -> list[dict]:
         """Get items modified since the given version from user library.
-        
+
         Args:
             since: The version number to get changes since
-            
+
         Returns:
             List of changed items
         """
@@ -948,11 +1010,11 @@ class ZoteroClient:
 
     def get_group_items_since(self, group_id: int, since: int) -> list[dict]:
         """Get items modified since the given version from a group's library.
-        
+
         Args:
             group_id: The group ID
             since: The version number to get changes since
-            
+
         Returns:
             List of changed items
         """
@@ -980,7 +1042,11 @@ class ZoteroClient:
     def _normalize_bibtex_token(self, value: str | None) -> str:
         if not value:
             return ""
-        ascii_value = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii")
+        ascii_value = (
+            unicodedata.normalize("NFKD", str(value))
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
         return re.sub(r"[^A-Za-z0-9]+", "", ascii_value)
 
     def _creator_to_bibtex_name(self, creator: dict) -> str:
@@ -994,7 +1060,9 @@ class ZoteroClient:
             return f"{last_name}, {first_name}"
         return last_name or first_name
 
-    def _append_bibtex_field(self, fields: list[str], name: str, value: str | None) -> None:
+    def _append_bibtex_field(
+        self, fields: list[str], name: str, value: str | None
+    ) -> None:
         cleaned = self._clean_bibtex_value(value)
         if cleaned:
             fields.append(f"  {name} = {{{cleaned}}},")
@@ -1042,13 +1110,20 @@ class ZoteroClient:
 
         creators = data.get("creators", [])
         author_types = {
-            "author", "inventor", "programmer", "artist", "podcaster", "presenter", "contributor"
+            "author",
+            "inventor",
+            "programmer",
+            "artist",
+            "podcaster",
+            "presenter",
+            "contributor",
         }
         editor_types = {"editor", "seriesEditor"}
         authors = [
             self._creator_to_bibtex_name(c)
             for c in creators
-            if (c.get("creatorType") or "author") in author_types and self._creator_to_bibtex_name(c)
+            if (c.get("creatorType") or "author") in author_types
+            and self._creator_to_bibtex_name(c)
         ]
         editors = [
             self._creator_to_bibtex_name(c)
@@ -1057,7 +1132,11 @@ class ZoteroClient:
         ]
 
         publication = data.get("publicationTitle") or data.get("journalAbbreviation")
-        booktitle = data.get("proceedingsTitle") or data.get("bookTitle") or data.get("conferenceName")
+        booktitle = (
+            data.get("proceedingsTitle")
+            or data.get("bookTitle")
+            or data.get("conferenceName")
+        )
         institution = data.get("institution") or data.get("publisher")
         school = data.get("university") or data.get("publisher")
 
@@ -1082,11 +1161,15 @@ class ZoteroClient:
         elif bibtex_type in {"phdthesis", "mastersthesis"}:
             self._append_bibtex_field(fields, "school", school)
         elif bibtex_type == "misc":
-            self._append_bibtex_field(fields, "howpublished", data.get("websiteTitle") or publication)
+            self._append_bibtex_field(
+                fields, "howpublished", data.get("websiteTitle") or publication
+            )
 
         self._append_bibtex_field(fields, "publisher", data.get("publisher"))
         self._append_bibtex_field(fields, "volume", data.get("volume"))
-        self._append_bibtex_field(fields, "number", data.get("issue") or data.get("seriesNumber"))
+        self._append_bibtex_field(
+            fields, "number", data.get("issue") or data.get("seriesNumber")
+        )
         self._append_bibtex_field(fields, "pages", data.get("pages"))
         self._append_bibtex_field(fields, "series", data.get("series"))
         self._append_bibtex_field(fields, "edition", data.get("edition"))
@@ -1181,7 +1264,9 @@ class ZoteroClient:
         try:
             from .config import config as _cfg
 
-            import_path = getattr(_cfg, "ZOTERO_CONNECTOR_IMPORT_PATH", "/connector/import")
+            import_path = getattr(
+                _cfg, "ZOTERO_CONNECTOR_IMPORT_PATH", "/connector/import"
+            )
             default_timeout = getattr(_cfg, "ZOTERO_CONNECTOR_TIMEOUT_SECONDS", 15)
         except Exception:
             import_path = "/connector/import"
@@ -1201,7 +1286,13 @@ class ZoteroClient:
         }
 
         try:
-            resp = self.session.post(url, params=params, headers=headers, data=bibtex.encode("utf-8"), timeout=timeout)
+            resp = self.session.post(
+                url,
+                params=params,
+                headers=headers,
+                data=bibtex.encode("utf-8"),
+                timeout=timeout,
+            )
             ok = resp.status_code in (200, 201)
             try:
                 payload = resp.json()

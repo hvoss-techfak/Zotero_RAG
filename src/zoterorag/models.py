@@ -18,7 +18,9 @@ class Document:
     pdf_path: Path | None = None
     added_date: str = ""
     modified_date: str = ""
-    parent_item_key: str | None = None  # For standalone attachments, track the parent paper
+    parent_item_key: str | None = (
+        None  # For standalone attachments, track the parent paper
+    )
     group_id: int | None = None  # Which group library (None = user library)
 
     def __hash__(self) -> int:
@@ -148,7 +150,9 @@ class EmbeddingStatus:
 
     def __str__(self) -> str:
         state = "running" if self.is_running else "idle"
-        failure_suffix = f", Failures: {self.failed_documents}" if self.failed_documents else ""
+        failure_suffix = (
+            f", Failures: {self.failed_documents}" if self.failed_documents else ""
+        )
         return (
             f"Progress: {self.processed_documents}/{self.total_documents} "
             f"({self.progress_percentage:.1f}%) - Sections: {self.embedded_sections}, "

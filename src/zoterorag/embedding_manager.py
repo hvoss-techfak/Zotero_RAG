@@ -1,5 +1,5 @@
 """Background embedding manager with ThreadPoolExecutor."""
-import json
+
 import logging
 import os
 import random
@@ -70,8 +70,12 @@ class EmbeddingManager:
                     status.processed_documents,
                 )
 
-            self._embedding_progress.embedded_sections += max(0, status.embedded_sections)
-            self._embedding_progress.embedded_sentences += max(0, status.embedded_sentences)
+            self._embedding_progress.embedded_sections += max(
+                0, status.embedded_sections
+            )
+            self._embedding_progress.embedded_sentences += max(
+                0, status.embedded_sentences
+            )
             self._embedding_progress.pending_sections = max(0, status.pending_sections)
             self._embedding_progress.failed_documents += max(0, status.failed_documents)
             self._embedding_progress.is_running = status.is_running
@@ -166,8 +170,8 @@ class EmbeddingManager:
         return [response["embedding"]]
 
     def embed_text(self, text_list: List[str]) -> List[List[float]]:
-        #we need to request manually
-        #convert list to the format expected by ollama json encoding of list string
+        # we need to request manually
+        # convert list to the format expected by ollama json encoding of list string
         response = requests.post(
             url=f"{self.config.OLLAMA_BASE_URL}/api/embed",
             json={
@@ -177,12 +181,18 @@ class EmbeddingManager:
             },
         )
         if response.status_code != 200:
-            raise ValueError(f"Embedding request failed with status {response.status_code}: {response.text}")
+            raise ValueError(
+                f"Embedding request failed with status {response.status_code}: {response.text}"
+            )
 
-        #to json
+        # to json
         response = response.json()
         embeddings = response.get("embeddings")
-        if not embeddings or not isinstance(embeddings, list) or not all(isinstance(e, list) for e in embeddings):
+        if (
+            not embeddings
+            or not isinstance(embeddings, list)
+            or not all(isinstance(e, list) for e in embeddings)
+        ):
             raise ValueError(f"Unexpected embedding response format: {response}")
 
         return embeddings
@@ -201,8 +211,13 @@ class EmbeddingManager:
                 normalized.append(str(t))
 
         batch_size = getattr(self.config, "BATCH_EMBEDDING_SIZE", 32)
-        logger.info(f"Embedding batch of {len(normalized)} texts with batch size {batch_size} and embedding dimensions {self.config.EMBEDDING_DIMENSIONS}")
-        logger.debug("Sample text for embedding: %s", random.choice(normalized) + "..." if normalized else "No texts")
+        logger.info(
+            f"Embedding batch of {len(normalized)} texts with batch size {batch_size} and embedding dimensions {self.config.EMBEDDING_DIMENSIONS}"
+        )
+        logger.debug(
+            "Sample text for embedding: %s",
+            random.choice(normalized) + "..." if normalized else "No texts",
+        )
         all_embeddings: List[List[float]] = []
 
         for i in range(0, len(normalized), batch_size):
@@ -235,7 +250,9 @@ class EmbeddingManager:
         pdf_path: str,
         callback: Optional[Callable[[EmbeddingStatus], None]] = None,
     ) -> Future:
-        return self.executor.submit(self._embed_document_task, document, pdf_path, callback)
+        return self.executor.submit(
+            self._embed_document_task, document, pdf_path, callback
+        )
 
     def embed_document_async_with_client(
         self,
@@ -277,7 +294,9 @@ class EmbeddingManager:
                 f.set_result(None)
                 return f
         except Exception as e:
-            logger.debug("[Embedding] Skip-check failed for %s: %s", document.zotero_key, e)
+            logger.debug(
+                "[Embedding] Skip-check failed for %s: %s", document.zotero_key, e
+            )
 
         return self.executor.submit(
             self._embed_document_from_zotero_task, document, zotero_client, callback
@@ -316,10 +335,14 @@ class EmbeddingManager:
 
             sent_embeddings = self.embed_batch([s.text for s in sentences])
             try:
-                self.vector_store.add_sentences(sentences, sent_embeddings, document_key=doc_key)
+                self.vector_store.add_sentences(
+                    sentences, sent_embeddings, document_key=doc_key
+                )
                 self.vector_store.update_embedded_document(doc_key, len(sentences))
             except Exception as e:
-                logger.error("Failed to store embeddings for document %s: %s", doc_key, e)
+                logger.error(
+                    "Failed to store embeddings for document %s: %s", doc_key, e
+                )
                 snapshot = self.mark_document_completed(
                     failed=True,
                     last_error=f"Failed to store embeddings for {doc_key}: {e}",
@@ -372,7 +395,9 @@ class EmbeddingManager:
             sentences = self.process_document(document, pdf_path)
 
             sent_embeddings = self.embed_batch([s.text for s in sentences])
-            self.vector_store.add_sentences(sentences, sent_embeddings, document_key=doc_key)
+            self.vector_store.add_sentences(
+                sentences, sent_embeddings, document_key=doc_key
+            )
             self.vector_store.update_embedded_document(doc_key, len(sentences))
 
             snapshot = self.mark_document_completed(embedded_sentences=len(sentences))
@@ -398,7 +423,9 @@ class EmbeddingManager:
                 callback(snapshot)
 
     @classmethod
-    def get_pdf_documents_from_directory(cls, pdf_dir: Path) -> List[tuple[Document, str]]:
+    def get_pdf_documents_from_directory(
+        cls, pdf_dir: Path
+    ) -> List[tuple[Document, str]]:
         """Scan a directory for PDF files and create Document objects.
 
         This helper is used by tests and the optional CLI.
@@ -437,7 +464,7 @@ class EmbeddingManager:
         if sum_total == 0:
             return 0.0
 
-        magnitude = (sum_total ** 0.5) / len(embedding)
+        magnitude = (sum_total**0.5) / len(embedding)
         positive_ratio = sum_positive / len(embedding)
         return (magnitude + positive_ratio) / 2
 
@@ -448,17 +475,18 @@ if __name__ == "__main__":
     setup_logging(level=os.getenv("LOG_LEVEL", "WARNING"))
 
     import argparse
+
     parser = argparse.ArgumentParser(description="Run embedding without MCP server")
     parser.add_argument(
         "--pdf-dir",
         type=str,
         default="./data/pdfs",
-        help="Directory containing PDF files to embed"
+        help="Directory containing PDF files to embed",
     )
     parser.add_argument(
         "--stop-on-error",
         action="store_true",
-        help="Stop on first error instead of continuing"
+        help="Stop on first error instead of continuing",
     )
     args = parser.parse_args()
 
@@ -480,7 +508,8 @@ if __name__ == "__main__":
     # Filter to unembedded docs
     embedded = manager.vector_store.get_embedded_documents()
     pending = [
-        (doc, path) for doc, path in documents
+        (doc, path)
+        for doc, path in documents
         if doc.zotero_key not in embedded or embedded[doc.zotero_key] == 0
     ]
 
@@ -490,7 +519,9 @@ if __name__ == "__main__":
         print(f"  Pending: {doc.title} ({doc.zotero_key})")
         pdf_processor = PDFProcessor()
         try:
-            sentences = pdf_processor.extract_sentences(str(pdf_dir / f"{doc.zotero_key}.pdf"))
+            sentences = pdf_processor.extract_sentences(
+                str(pdf_dir / f"{doc.zotero_key}.pdf")
+            )
             print(f"    Extracted {len(sentences)} sentences")
             manager.embed_batch([s.text for s in sentences])
         except Exception as e:

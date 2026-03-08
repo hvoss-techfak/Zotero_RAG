@@ -3,7 +3,6 @@
 import logging
 from typing import List, Optional
 
-import ollama
 from ollama import Client
 
 from .config import Config
@@ -20,8 +19,11 @@ class SearchEngine:
         self.config = config
         self.vector_store = VectorStore(str(config.VECTOR_STORE_DIR))
 
-        if self.config.EMBEDDING_DIMENSIONS > 0 and self.vector_store.has_dimension_mismatch(
-            self.config.EMBEDDING_DIMENSIONS
+        if (
+            self.config.EMBEDDING_DIMENSIONS > 0
+            and self.vector_store.has_dimension_mismatch(
+                self.config.EMBEDDING_DIMENSIONS
+            )
         ):
             detected = self.vector_store.get_detected_dimension()
             logger.warning(
@@ -61,7 +63,9 @@ class SearchEngine:
             top_sentences: we return up to top_sentences sentences.
         """
         top_k = max(1, top_sentences)
-        return self.search_best_sentences(query=query, document_key=document_key, top_sentences=top_k)
+        return self.search_best_sentences(
+            query=query, document_key=document_key, top_sentences=top_k
+        )
 
     def search_best_sentences(
         self,

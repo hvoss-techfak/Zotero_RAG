@@ -68,14 +68,14 @@ def extract_citation_numbers_from_sentence(sentence: str) -> list[int]:
 
 def extract_page_text_from_pymupdf4llm(pdf_path: str | Path) -> list[dict]:
     """Extract page text using pymupdf4llm for consistent extraction.
-    
+
     Returns a list of dicts with 'page' (1-based) and 'text' keys.
     This matches the format used by pdf_processor.py.
     """
     path = Path(pdf_path)
     if not path.exists():
         return []
-    
+
     try:
         buf_out = io.StringIO()
         buf_err = io.StringIO()
@@ -86,9 +86,12 @@ def extract_page_text_from_pymupdf4llm(pdf_path: str | Path) -> list[dict]:
                 write_images=False,
                 extract_images=False,
             )
-        
+
         if isinstance(md_text, list):
-            return [{"page": chunk.get("page", 1), "text": chunk.get("text", "")} for chunk in md_text]
+            return [
+                {"page": chunk.get("page", 1), "text": chunk.get("text", "")}
+                for chunk in md_text
+            ]
         elif md_text:
             return [{"page": 1, "text": str(md_text)}]
         return []
@@ -98,9 +101,9 @@ def extract_page_text_from_pymupdf4llm(pdf_path: str | Path) -> list[dict]:
 
 def find_references_start_page(pages: list[dict]) -> int:
     """Return 0-based page index for the start of references section."""
-    
+
     heading_re = re.compile(r"^\s*References\s*$", re.I | re.M)
-    
+
     for i, chunk in enumerate(pages):
         text = chunk.get("text", "")
         if heading_re.search(text):
@@ -119,9 +122,11 @@ def find_references_start_page(pages: list[dict]) -> int:
     return max(0, len(pages) - 1)
 
 
-def parse_references_from_pages(pages: list[dict], start_page_idx: int) -> dict[int, str]:
+def parse_references_from_pages(
+    pages: list[dict], start_page_idx: int
+) -> dict[int, str]:
     """Parse references of the form '[12] ...' into a mapping."""
-    
+
     ref_line_re = re.compile(r"^\s*\[(\d{1,4})]\s+(.*)$")
 
     entries: dict[int, str] = {}
@@ -195,7 +200,9 @@ def _split_authors(authors_raw: str) -> list[str]:
     return [p for p in out if p.lower() not in {"et al", "et al."}]
 
 
-def reference_text_to_bibtex(ref_text: str, number: Optional[int] = None) -> Optional[str]:
+def reference_text_to_bibtex(
+    ref_text: str, number: Optional[int] = None
+) -> Optional[str]:
     """Convert a reference string into a minimal BibTeX entry (heuristic)."""
 
     txt = _normalize_ws(ref_text)
@@ -307,7 +314,7 @@ def extract_citation_metadata(pdf_path: str | Path) -> dict[str, CitationMetadat
     Uses pymupdf4llm for consistent text extraction with pdf_processor.py.
     This ensures sentence boundaries match when attaching citations.
     """
-    
+
     # Use pymupdf4llm to extract pages consistently
     pages = extract_page_text_from_pymupdf4llm(pdf_path)
     if not pages:
@@ -315,21 +322,23 @@ def extract_citation_metadata(pdf_path: str | Path) -> dict[str, CitationMetadat
 
     ref_start_idx = find_references_start_page(pages)
     refs = parse_references_from_pages(pages, ref_start_idx)
-    refs_bibtex: dict[int, Optional[str]] = {n: reference_text_to_bibtex(t, number=n) for n, t in refs.items()}
+    refs_bibtex: dict[int, Optional[str]] = {
+        n: reference_text_to_bibtex(t, number=n) for n, t in refs.items()
+    }
 
     # Use same splitter as pdf_processor.py for consistent sentence boundaries
     splitter = re.compile(r"(?<=[.!?])\s+(?=[\"\[(]?[A-Z0-9])")
 
     sentence_map: dict[str, CitationMetadata] = {}
-    
+
     # Process pages before the references section
     for i in range(0, max(0, ref_start_idx)):
         chunk = pages[i]
         text = chunk.get("text", "")
-        
+
         if not text:
             continue
-            
+
         # Split into lines and filter out standalone page numbers
         lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
         filtered = [ln for ln in lines if not (ln.isdigit() and len(ln) <= 3)]
@@ -337,14 +346,16 @@ def extract_citation_metadata(pdf_path: str | Path) -> dict[str, CitationMetadat
         combined_text = _normalize_ws(" ".join(filtered))
         if not combined_text:
             continue
-            
+
         # Split into sentences using the same pattern as pdf_processor.py
         for sent in splitter.split(combined_text):
             s = _normalize_ws(sent)
 
-            if not s or len(s.split()) <= 3:  # Skip short sentences like in pdf_processor
+            if (
+                not s or len(s.split()) <= 3
+            ):  # Skip short sentences like in pdf_processor
                 continue
-                
+
             nums = extract_citation_numbers_from_sentence(s)
 
             referenced_texts: list[str] = []
@@ -363,4 +374,3 @@ def extract_citation_metadata(pdf_path: str | Path) -> dict[str, CitationMetadat
             )
 
     return sentence_map
-

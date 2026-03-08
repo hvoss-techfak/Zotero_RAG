@@ -56,7 +56,11 @@ class DoiClient:
         """
         norm = normalize_doi(doi)
         url = f"{self.base_url}{norm}"
-        resp = self.session.get(url, headers={"Accept": "application/x-bibtex"}, timeout=self.timeout_seconds)
+        resp = self.session.get(
+            url,
+            headers={"Accept": "application/x-bibtex"},
+            timeout=self.timeout_seconds,
+        )
         resp.raise_for_status()
         bibtex = (resp.text or "").strip()
         if not bibtex:

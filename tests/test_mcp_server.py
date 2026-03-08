@@ -1,7 +1,6 @@
 import sys
 import os
 import asyncio
-from unittest.mock import MagicMock
 
 # Add src to path like main.py does
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -11,11 +10,15 @@ from zoterorag.mcp_server import MCPZoteroServer
 from zoterorag.models import SearchResult, EmbeddingStatus
 
 
-def test_mcp_search_documents_passes_citation_return_mode_and_filters_require_cited_bibtex(monkeypatch):
+def test_mcp_search_documents_passes_citation_return_mode_and_filters_require_cited_bibtex(
+    monkeypatch,
+):
     config = Config()
     server = MCPZoteroServer(config)
 
-    monkeypatch.setattr(server, "_get_metadata_for_key", lambda key: {"title": "", "bibtex": ""})
+    monkeypatch.setattr(
+        server, "_get_metadata_for_key", lambda key: {"title": "", "bibtex": ""}
+    )
     server.search_engine.vector_store.get_document_title = lambda key: None
 
     r_with = SearchResult(
@@ -75,8 +78,20 @@ def test_mcp_search_documents_enriches_all_results_with_document_bibtex(monkeypa
     server.search_engine.vector_store.get_document_title = lambda key: None
     server.do_reranking = lambda results, query: results
     server.search_engine.search_best_sentences = lambda **kwargs: [
-        SearchResult(text="match", document_title="", section_title="", zotero_key="doc1", relevance_score=0.9),
-        SearchResult(text="match2", document_title="", section_title="", zotero_key="doc1", relevance_score=0.8),
+        SearchResult(
+            text="match",
+            document_title="",
+            section_title="",
+            zotero_key="doc1",
+            relevance_score=0.9,
+        ),
+        SearchResult(
+            text="match2",
+            document_title="",
+            section_title="",
+            zotero_key="doc1",
+            relevance_score=0.8,
+        ),
     ]
 
     out = asyncio.run(server.search_documents(query="query", min_relevance=0.0))
@@ -108,12 +123,25 @@ def test_get_embedding_status_returns_progress_payload(monkeypatch):
     config = Config()
     server = MCPZoteroServer(config)
 
-    monkeypatch.setattr(server.search_engine, "get_stats", lambda: {"total_sentences": 12, "embedded_documents": 2})
-    monkeypatch.setattr(server.embedding_manager.vector_store, "get_embedded_documents", lambda: {"A": 3, "B": 4})
+    monkeypatch.setattr(
+        server.search_engine,
+        "get_stats",
+        lambda: {"total_sentences": 12, "embedded_documents": 2},
+    )
+    monkeypatch.setattr(
+        server.embedding_manager.vector_store,
+        "get_embedded_documents",
+        lambda: {"A": 3, "B": 4},
+    )
     monkeypatch.setattr(
         server.embedding_manager,
         "get_embedding_status",
-        lambda: EmbeddingStatus(total_documents=4, processed_documents=2, embedded_sentences=50, is_running=True),
+        lambda: EmbeddingStatus(
+            total_documents=4,
+            processed_documents=2,
+            embedded_sentences=50,
+            is_running=True,
+        ),
     )
     server.set_next_auto_reembed_at("2026-03-08T10:15:00+00:00")
 

@@ -38,7 +38,9 @@ class MCPZoteroServer:
         self._last_run_summary: str = "Idle"
         self._next_auto_reembed_at: str = ""
 
-    def register_embedding_status_listener(self, listener: Callable[[object], None]) -> None:
+    def register_embedding_status_listener(
+        self, listener: Callable[[object], None]
+    ) -> None:
         """Register a callback notified whenever embedding progress changes."""
 
         self._status_listeners.append(listener)
@@ -65,7 +67,9 @@ class MCPZoteroServer:
         pending = []
         for doc in all_docs_with_pdfs:
             try:
-                if self.embedding_manager.vector_store.is_document_embedded(doc.zotero_key):
+                if self.embedding_manager.vector_store.is_document_embedded(
+                    doc.zotero_key
+                ):
                     continue
             except Exception:
                 pass
@@ -106,7 +110,9 @@ class MCPZoteroServer:
                         )
                     )
                 except Exception as e:
-                    logger.error("Failed to submit %s for embedding: %s", doc.zotero_key, e)
+                    logger.error(
+                        "Failed to submit %s for embedding: %s", doc.zotero_key, e
+                    )
                     snapshot = self.embedding_manager.mark_document_completed(
                         failed=True,
                         last_error=f"Failed to submit {doc.zotero_key}: {e}",
@@ -121,17 +127,15 @@ class MCPZoteroServer:
 
             final_status = self.embedding_manager.finish_embedding_job()
             if final_status.failed_documents:
-                self._last_run_summary = (
-                    f"Embedding finished with {final_status.failed_documents} failed document(s)."
-                )
+                self._last_run_summary = f"Embedding finished with {final_status.failed_documents} failed document(s)."
             else:
-                self._last_run_summary = (
-                    f"Embedding finished successfully for {final_status.processed_documents} document(s)."
-                )
+                self._last_run_summary = f"Embedding finished successfully for {final_status.processed_documents} document(s)."
             self._notify_embedding_status(final_status)
         except Exception as e:
             logger.exception("Background embedding run failed")
-            final_status = self.embedding_manager.finish_embedding_job(last_error=str(e))
+            final_status = self.embedding_manager.finish_embedding_job(
+                last_error=str(e)
+            )
             self._last_run_summary = f"Embedding failed: {e}"
             self._notify_embedding_status(final_status)
         finally:
@@ -143,7 +147,9 @@ class MCPZoteroServer:
 
         with self._embedding_lock:
             current_status = self.embedding_manager.get_embedding_status()
-            if current_status.is_running or (self._embedding_thread and self._embedding_thread.is_alive()):
+            if current_status.is_running or (
+                self._embedding_thread and self._embedding_thread.is_alive()
+            ):
                 return {
                     "status": "already_running",
                     "message": "A background embedding job is already running.",
@@ -194,23 +200,27 @@ class MCPZoteroServer:
             return metadata
 
         # Return empty metadata structure
-        logger.debug(f"No metadata found, returning empty structure for key: {item_key}")
+        logger.debug(
+            f"No metadata found, returning empty structure for key: {item_key}"
+        )
         return {
             "bibtex": "",
             "file_path": "",
             "title": "",
             "authors": [],
             "date": "",
-            "item_type": ""
+            "item_type": "",
         }
 
     # --- MCP Tool Implementations ---
 
-    def do_reranking(self, results: list[SearchResult], query: str) -> list[SearchResult]:
+    def do_reranking(
+        self, results: list[SearchResult], query: str
+    ) -> list[SearchResult]:
         """Optional second-stage reranking of search results."""
 
         rer = Reranker()
-        results = rer.rerank(results,query)
+        results = rer.rerank(results, query)
         return results
 
     async def search_documents(
@@ -238,7 +248,9 @@ class MCPZoteroServer:
         """
         logger.debug(f"search_documents called with query: {query}")
 
-        temp_top_sentences = top_sentences * 10 if require_cited_bibtex else top_sentences
+        temp_top_sentences = (
+            top_sentences * 10 if require_cited_bibtex else top_sentences
+        )
 
         results = self.search_engine.search_best_sentences(
             query=query,
@@ -260,11 +272,13 @@ class MCPZoteroServer:
         for r in results:
             if r.relevance_score >= min_relevance:
                 logger.debug(
-                    f"Keeping result with relevance {r.relevance_score}, sentence: {r.text[:150]}...")
+                    f"Keeping result with relevance {r.relevance_score}, sentence: {r.text[:150]}..."
+                )
                 ret.append(r)
             else:
                 logger.debug(
-                    f"Filtering out result with relevance {r.relevance_score} below threshold {min_relevance}, sentence: {r.text[:150]}...")
+                    f"Filtering out result with relevance {r.relevance_score} below threshold {min_relevance}, sentence: {r.text[:150]}..."
+                )
 
         if len(ret) == 0:
             logger.debug("No results above relevance threshold")
@@ -273,62 +287,67 @@ class MCPZoteroServer:
         # Do reranking
         results = self.do_reranking(ret, query)
 
-
-
         logger.debug(f"Got {len(results)} search results")
-        
+
         # First pass: collect all unique keys and fetch metadata for each once
         # This ensures we call Zotero API at most once per unique document
         key_to_metadata: dict[str, dict] = {}
-        
+
         for r in results:
             zotero_key = r.zotero_key
             logger.debug(f"Processing result with zotero_key: {zotero_key}")
-            
+
             if zotero_key and zotero_key not in key_to_metadata:
                 # Fetch Zotero metadata (only once per unique document)
                 meta = self._get_metadata_for_key(zotero_key)
-                
+
                 # If no Zotero title, fall back to vector store title
                 if not meta.get("title"):
-                    vs_title = self.search_engine.vector_store.get_document_title(zotero_key)
+                    vs_title = self.search_engine.vector_store.get_document_title(
+                        zotero_key
+                    )
                     if vs_title:
                         meta["title"] = vs_title
-                
+
                 key_to_metadata[zotero_key] = meta
-        
+
         # Second pass: apply metadata to ALL results (not just the first one per key)
         enriched_results = []
-        
+
         for r in results:
             result_dict = r.to_dict()
-            
+
             zotero_key = r.zotero_key
-            
+
             if zotero_key and zotero_key in key_to_metadata:
                 meta = key_to_metadata[zotero_key]
-                
+
                 # Apply all enriched data to this result
                 result_dict["bibtex"] = meta.get("bibtex", "")
                 result_dict["file_path"] = meta.get("file_path", "")
                 result_dict["authors"] = meta.get("authors", [])
                 result_dict["date"] = meta.get("date", "")
                 result_dict["item_type"] = meta.get("item_type", "")
-                
+
                 # Set document_title - prefer Zotero title, fallback to vector store
                 doc_title = meta.get("title", "")
                 if not doc_title:
-                    vs_title = self.search_engine.vector_store.get_document_title(zotero_key)
+                    vs_title = self.search_engine.vector_store.get_document_title(
+                        zotero_key
+                    )
                     if vs_title:
                         doc_title = vs_title
                 result_dict["document_title"] = doc_title
-            
-            # If we still don't have a document title, use section info as fallback
-            if not result_dict.get("document_title") and result_dict.get("section_title"):
-                result_dict["document_title"] = f"Document containing: {result_dict['section_title'][:50]}"
-            
-            enriched_results.append(result_dict)
 
+            # If we still don't have a document title, use section info as fallback
+            if not result_dict.get("document_title") and result_dict.get(
+                "section_title"
+            ):
+                result_dict["document_title"] = (
+                    f"Document containing: {result_dict['section_title'][:50]}"
+                )
+
+            enriched_results.append(result_dict)
 
         return enriched_results
 
@@ -339,8 +358,10 @@ class MCPZoteroServer:
             {
                 "key": item.get("key", ""),
                 "title": item.get("data", {}).get("title", ""),
-                "authors": [a.get("firstName", "") + " " + a.get("lastName", "")
-                           for a in item.get("data", {}).get("creators", [])],
+                "authors": [
+                    a.get("firstName", "") + " " + a.get("lastName", "")
+                    for a in item.get("data", {}).get("creators", [])
+                ],
                 "date": item.get("data", {}).get("date", ""),
             }
             for item in items
@@ -370,12 +391,10 @@ class MCPZoteroServer:
         await self.start_auto_embedding()
 
     async def sync_and_embed(
-        self,
-        embed_sentences: bool = False,
-        document_key: Optional[str] = None
+        self, embed_sentences: bool = False, document_key: Optional[str] = None
     ) -> dict:
         """Sync from Zotero and optionally embed new documents.
-        
+
         Uses on-demand PDF fetching - PDFs are fetched temporarily for embedding
         and not saved to disk permanently.
         """
@@ -385,19 +404,20 @@ class MCPZoteroServer:
         if not all_docs_with_pdfs:
             return {
                 "status": "no_documents",
-                "message": "No documents with PDFs found in Zotero"
+                "message": "No documents with PDFs found in Zotero",
             }
 
         # Filter by document key if specified
         docs_to_process = [
-            doc for doc in all_docs_with_pdfs
+            doc
+            for doc in all_docs_with_pdfs
             if document_key is None or doc.zotero_key == document_key
         ]
 
         if not docs_to_process:
             return {
                 "status": "no_match",
-                "message": f"No documents matching {document_key}"
+                "message": f"No documents matching {document_key}",
             }
 
         # Get currently embedded docs
@@ -405,30 +425,31 @@ class MCPZoteroServer:
 
         # Filter to only new/updated documents (using zotero_client approach)
         pending = [
-            doc for doc in docs_to_process
+            doc
+            for doc in docs_to_process
             if doc.zotero_key not in embedded or embedded[doc.zotero_key] == 0
         ]
 
         if not pending:
             return {
                 "status": "up_to_date",
-                "message": f"All {len(docs_to_process)} documents already embedded"
+                "message": f"All {len(docs_to_process)} documents already embedded",
             }
 
         # Submit for background embedding using on-demand PDF fetching
         # This uses the new method that fetches PDFs temporarily without saving
         futures = []
         for doc in pending:
+
             def make_callback(doc_key: str):
                 def cb(status):
                     self._progress_callback(doc_key, status)
+
                 return cb
 
             try:
                 future = self.embedding_manager.embed_document_async_with_client(
-                    doc,
-                    self.zotero_client,
-                    callback=make_callback(doc.zotero_key)
+                    doc, self.zotero_client, callback=make_callback(doc.zotero_key)
                 )
                 futures.append(future)
             except Exception as e:
@@ -437,7 +458,7 @@ class MCPZoteroServer:
         return {
             "status": "started",
             "pending_count": len(pending),
-            "message": f"Started embedding {len(pending)} documents (temp file mode)"
+            "message": f"Started embedding {len(pending)} documents (temp file mode)",
         }
 
     def _progress_callback(self, doc_key: str, status):
@@ -493,13 +514,14 @@ class MCPZoteroServer:
 
         # Re-embed using on-demand PDF fetching (temp file mode)
         self.embedding_manager.embed_document_async_with_client(
-            target_doc,
-            self.zotero_client
+            target_doc, self.zotero_client
         )
 
         return {"status": "reembedding", "document_key": document_key}
 
-    async def import_item_by_doi(self, doi: str, collection_key: Optional[str] = None) -> dict:
+    async def import_item_by_doi(
+        self, doi: str, collection_key: Optional[str] = None
+    ) -> dict:
         """Import a bibliographic item into Zotero by DOI.
 
         Accepts a bare DOI ("10.1111/cgf.13217") or a DOI URL ("https://doi.org/... ").
@@ -512,7 +534,11 @@ class MCPZoteroServer:
         try:
             bibtex = self.doi_client.fetch_bibtex(norm)
         except Exception as e:
-            return {"status": "error", "doi": norm, "message": f"Failed to fetch BibTeX: {e}"}
+            return {
+                "status": "error",
+                "doi": norm,
+                "message": f"Failed to fetch BibTeX: {e}",
+            }
 
         result = self.zotero_client.import_bibtex_via_connector(
             bibtex,
@@ -596,6 +622,7 @@ async def search_documents(
         citation_return_mode=citation_return_mode,
         require_cited_bibtex=require_cited_bibtex,
     )
+
 
 #
 # @mcp.tool

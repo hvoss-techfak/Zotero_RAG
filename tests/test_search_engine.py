@@ -5,7 +5,7 @@ import os
 from unittest.mock import patch, MagicMock
 
 # Add src to path like main.py does
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from zoterorag.search_engine import SearchEngine
 from zoterorag.config import Config
@@ -15,7 +15,7 @@ from zoterorag.models import SearchResult
 class TestSearchEngineInitialization:
     """Test suite for SearchEngine initialization."""
 
-    @patch('zoterorag.search_engine.VectorStore')
+    @patch("zoterorag.search_engine.VectorStore")
     def test_default_initialization(self, mock_vector_store):
         """Test default initialization."""
         config = Config()
@@ -29,7 +29,7 @@ class TestSearchEngineInitialization:
 class TestQueryEmbedding:
     """Test suite for query embedding generation."""
 
-    @patch('zoterorag.search_engine.ollama.embeddings')
+    @patch("zoterorag.search_engine.ollama.embeddings")
     def test_get_query_embedding(self, mock_ollama_embeddings):
         """Test query embedding generation."""
         mock_response = {"embedding": [0.1, 0.2, 0.3]}
@@ -47,8 +47,10 @@ class TestQueryEmbedding:
 class TestSearchBestSentences:
     """Search should use ANN ids+distances and only fetch top-k texts."""
 
-    @patch('zoterorag.search_engine.ollama.embeddings')
-    def test_search_best_sentences_uses_ids_and_fetches_texts(self, mock_ollama_embeddings):
+    @patch("zoterorag.search_engine.ollama.embeddings")
+    def test_search_best_sentences_uses_ids_and_fetches_texts(
+        self, mock_ollama_embeddings
+    ):
         mock_ollama_embeddings.return_value = {"embedding": [0.0, 0.0, 1.0]}
 
         config = Config()
@@ -70,7 +72,7 @@ class TestSearchBestSentences:
         mock_vs.get_sentence_texts_by_ids.assert_called_once_with(["s1", "s2"])
         assert all(isinstance(r, SearchResult) for r in results)
 
-    @patch('zoterorag.search_engine.ollama.embeddings')
+    @patch("zoterorag.search_engine.ollama.embeddings")
     def test_search_best_sentences_citation_return_modes(self, mock_ollama_embeddings):
         mock_ollama_embeddings.return_value = {"embedding": [0.0, 0.0, 1.0]}
 
@@ -94,17 +96,23 @@ class TestSearchBestSentences:
         engine.vector_store = mock_vs
 
         # sentence-only
-        r1 = engine.search_best_sentences("q", top_sentences=1, citation_return_mode="sentence")
+        r1 = engine.search_best_sentences(
+            "q", top_sentences=1, citation_return_mode="sentence"
+        )
         assert r1[0].text == "hello [5]"
         assert r1[0].citation_numbers == [5]
         assert r1[0].cited_bibtex
 
         # bibtex-only
-        r2 = engine.search_best_sentences("q", top_sentences=1, citation_return_mode="bibtex")
+        r2 = engine.search_best_sentences(
+            "q", top_sentences=1, citation_return_mode="bibtex"
+        )
         assert "@article" in r2[0].text
 
         # both
-        r3 = engine.search_best_sentences("q", top_sentences=1, citation_return_mode="both")
+        r3 = engine.search_best_sentences(
+            "q", top_sentences=1, citation_return_mode="both"
+        )
         assert "hello [5]" in r3[0].text
         assert "@article" in r3[0].text
 
@@ -117,7 +125,11 @@ class TestGetStats:
 
         mock_vs = MagicMock()
         mock_vs.get_sentence_count.return_value = 50
-        mock_vs.get_embedded_documents.return_value = {"doc1": 10, "doc2": 20, "doc3": 30}
+        mock_vs.get_embedded_documents.return_value = {
+            "doc1": 10,
+            "doc2": 20,
+            "doc3": 30,
+        }
 
         engine = SearchEngine(config)
         engine.vector_store = mock_vs
@@ -135,13 +147,13 @@ class TestDimensionMismatch:
         config = Config()
         config.EMBEDDING_DIMENSIONS = 1024
 
-        with patch('zoterorag.search_engine.VectorStore') as mock_vs_cls:
+        with patch("zoterorag.search_engine.VectorStore") as mock_vs_cls:
             mock_vs = MagicMock()
             mock_vs.has_dimension_mismatch.return_value = True
             mock_vs.get_detected_dimension.return_value = 768
             mock_vs_cls.return_value = mock_vs
 
-            with patch('zoterorag.search_engine.logger') as mock_logger:
+            with patch("zoterorag.search_engine.logger") as mock_logger:
                 _ = SearchEngine(config)
                 assert mock_logger.warning.called
 
@@ -157,7 +169,7 @@ class TestSearchResultModel:
             section_title="Section Title",
             zotero_key="ABC123",
             relevance_score=0.8,
-            rerank_score=0.9
+            rerank_score=0.9,
         )
 
         assert result.text == "Sample text"
@@ -166,10 +178,7 @@ class TestSearchResultModel:
     def test_search_result_default_scores(self):
         """Test default score values."""
         result = SearchResult(
-            text="Text",
-            document_title="",
-            section_title="",
-            zotero_key=""
+            text="Text", document_title="", section_title="", zotero_key=""
         )
 
         assert result.rerank_score is None or isinstance(result.rerank_score, float)

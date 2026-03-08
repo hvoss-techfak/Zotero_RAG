@@ -16,7 +16,9 @@ from zoterorag.embedding_manager import EmbeddingManager
 from zoterorag.models import Document
 
 
-def test_embed_document_async_with_client_skips_if_already_embedded(tmp_path: Path) -> None:
+def test_embed_document_async_with_client_skips_if_already_embedded(
+    tmp_path: Path,
+) -> None:
     config = Config()
     config.VECTOR_STORE_DIR = str(tmp_path)
 
@@ -43,7 +45,9 @@ def test_embed_document_async_with_client_skips_if_already_embedded(tmp_path: Pa
     assert mgr.get_embedding_status().processed_documents == 1
 
 
-def test_embed_document_async_with_client_runs_if_not_embedded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_embed_document_async_with_client_runs_if_not_embedded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = Config()
     config.VECTOR_STORE_DIR = str(tmp_path)
 
@@ -52,7 +56,9 @@ def test_embed_document_async_with_client_runs_if_not_embedded(tmp_path: Path, m
     doc = Document(zotero_key="D2", title="Not embedded")
 
     zotero_client = MagicMock()
-    zotero_client.get_pdf_bytes.return_value = b"%PDF-1.4 fake"  # won't be parsed; we stub below
+    zotero_client.get_pdf_bytes.return_value = (
+        b"%PDF-1.4 fake"  # won't be parsed; we stub below
+    )
 
     # Avoid needing a real PDF by stubbing out the inner task early.
     called = {"n": 0}
@@ -67,4 +73,3 @@ def test_embed_document_async_with_client_runs_if_not_embedded(tmp_path: Path, m
     fut.result(timeout=2)
 
     assert called["n"] == 1
-

@@ -9,10 +9,8 @@ from typing import List
 
 import pymupdf4llm
 
-from .config import config
 from .models import Document, Sentence
 from .citation_extractor import extract_citation_metadata
-from .citation_extractor import extract_citation_numbers_from_sentence
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +49,10 @@ class PDFProcessor:
         try:
             buf_out = io.StringIO()
             buf_err = io.StringIO()
-            with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+            with (
+                contextlib.redirect_stdout(buf_out),
+                contextlib.redirect_stderr(buf_err),
+            ):
                 if self.use_layout:
                     md_text = pymupdf4llm.to_markdown(
                         str(path),
@@ -153,7 +154,7 @@ class PDFProcessor:
         self, pdf_path: str | Path, document_id: str | None = None
     ) -> List[Sentence]:
         """Backward-compatible alias for `extract_sentences` to avoid breaking existing code.
-        
+
         Args:
             pdf_path: Path to the PDF file
             document_id: Optional override for the document ID used in sentence IDs.
@@ -181,13 +182,12 @@ class PDFProcessor:
             List[Sentence] objects.
         """
         path = Path(pdf_path)
-        
+
         # Use provided document_id or derive from filename
         doc_id = document_id if document_id else path.stem
-        
+
         if not path.exists():
             return []
-
 
         try:
             extracted = extract_citation_metadata(path)
@@ -196,7 +196,7 @@ class PDFProcessor:
             return []
 
         out_sentences = []
-        for i,(sentence,metadata) in enumerate(extracted.items()):
+        for i, (sentence, metadata) in enumerate(extracted.items()):
             out = Sentence(
                 id=f"{doc_id}_sent_{i}",
                 document_id=doc_id,
@@ -215,6 +215,7 @@ class PDFProcessor:
 
     def _normalize_ws(self, s: str) -> str:
         return re.sub(r"\s+", " ", (s or "")).strip()
+
 
 def process_document(document: Document) -> List[Sentence]:
     """Process a document to extract sentences."""

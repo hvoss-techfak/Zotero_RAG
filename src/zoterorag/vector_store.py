@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import threading
-import traceback
 from pathlib import Path
 from typing import Optional, List, Any
 
@@ -86,7 +85,7 @@ class VectorStore:
                 except Exception as e:
                     logger.debug("Could not optimize LanceDB table: %s", e)
             try:
-                #check if there is already an index on the vector column
+                # check if there is already an index on the vector column
                 existing_indexes = self.sentences_table.list_indices()
                 for idx in existing_indexes:
                     if "vector" in idx.columns and idx.name == "vector_idx":
@@ -102,10 +101,11 @@ class VectorStore:
                 self._index_ready = True
             except Exception as e:
                 logger.debug("Could not create LanceDB cosine index yet: %s", e)
-                logger.debug("Probably the table is not ready; it will be retried on next add/search.")
+                logger.debug(
+                    "Probably the table is not ready; it will be retried on next add/search."
+                )
         finally:
             self.index_lock.release_lock()
-
 
     def _detect_dimensions(self):
         """Detect embedding dimensions from existing table rows."""
@@ -262,13 +262,21 @@ class VectorStore:
                     "document": str(s.text),
                     "document_key": str(document_key),
                     "page": int(s.page),
-                    "page_section": int(s.page_section) if s.page_section is not None else None,
+                    "page_section": int(s.page_section)
+                    if s.page_section is not None
+                    else None,
                     "sentence_index": int(s.sentence_index),
                 }
 
-                citation_numbers = _clip_list([int(num) for num in (s.citation_numbers or [])])
-                referenced_texts = _clip_list([str(t) for t in (s.referenced_texts or [])], limit=20)
-                referenced_bibtex = _clip_list([str(b) for b in (s.referenced_bibtex or [])], limit=20)
+                citation_numbers = _clip_list(
+                    [int(num) for num in (s.citation_numbers or [])]
+                )
+                referenced_texts = _clip_list(
+                    [str(t) for t in (s.referenced_texts or [])], limit=20
+                )
+                referenced_bibtex = _clip_list(
+                    [str(b) for b in (s.referenced_bibtex or [])], limit=20
+                )
 
                 # Keep schema stable by always writing list fields, even when empty.
                 row["citation_numbers"] = citation_numbers
@@ -284,7 +292,9 @@ class VectorStore:
                         data=rows,
                         mode="overwrite",
                     )
-                    self._detected_sentence_dim = len(rows[0].get("vector") or []) if rows else None
+                    self._detected_sentence_dim = (
+                        len(rows[0].get("vector") or []) if rows else None
+                    )
                 else:
                     ids = [r["id"] for r in rows]
                     try:
@@ -302,27 +312,31 @@ class VectorStore:
             return []
 
         try:
-            rows = (
-                self._safe_select(
-                    self.sentences_table.search().where(self._where_eq("document_key", document_key)),
-                    [
-                        "id",
-                        "document",
-                        "document_key",
-                        "page",
-                        "page_section",
-                        "sentence_index",
-                        "citation_numbers",
-                        "referenced_texts",
-                        "referenced_bibtex",
-                    ],
-                )
-                .to_list()
-            )
+            rows = self._safe_select(
+                self.sentences_table.search().where(
+                    self._where_eq("document_key", document_key)
+                ),
+                [
+                    "id",
+                    "document",
+                    "document_key",
+                    "page",
+                    "page_section",
+                    "sentence_index",
+                    "citation_numbers",
+                    "referenced_texts",
+                    "referenced_bibtex",
+                ],
+            ).to_list()
         except Exception:
             return []
 
-        rows.sort(key=lambda r: (int(r.get("page", 1) or 1), int(r.get("sentence_index", 0) or 0)))
+        rows.sort(
+            key=lambda r: (
+                int(r.get("page", 1) or 1),
+                int(r.get("sentence_index", 0) or 0),
+            )
+        )
 
         out: list[Sentence] = []
         for row in rows:
@@ -332,7 +346,9 @@ class VectorStore:
                     document_id=str(row.get("document_key", document_key)),
                     page=int(row.get("page", 1) or 1),
                     page_section=(
-                        int(row["page_section"]) if row.get("page_section") is not None else None
+                        int(row["page_section"])
+                        if row.get("page_section") is not None
+                        else None
                     ),
                     sentence_index=int(row.get("sentence_index", 0) or 0),
                     text=str(row.get("document", "")),
@@ -352,22 +368,21 @@ class VectorStore:
         out: dict[str, dict] = {}
         for sid in [str(i) for i in ids]:
             try:
-                row_list = (
-                    self._safe_select(
-                        self.sentences_table.search().where(self._where_eq("id", sid)).limit(1),
-                        [
-                            "id",
-                            "document_key",
-                            "page",
-                            "page_section",
-                            "sentence_index",
-                            "citation_numbers",
-                            "referenced_texts",
-                            "referenced_bibtex",
-                        ],
-                    )
-                    .to_list()
-                )
+                row_list = self._safe_select(
+                    self.sentences_table.search()
+                    .where(self._where_eq("id", sid))
+                    .limit(1),
+                    [
+                        "id",
+                        "document_key",
+                        "page",
+                        "page_section",
+                        "sentence_index",
+                        "citation_numbers",
+                        "referenced_texts",
+                        "referenced_bibtex",
+                    ],
+                ).to_list()
             except Exception:
                 continue
             if not row_list:
@@ -417,10 +432,12 @@ class VectorStore:
         if not self.sentences_table:
             return [], [], []
 
-        #self._ensure_cosine_index()
+        # self._ensure_cosine_index()
 
         def _execute_query() -> list[dict]:
-            builder: Any = self.sentences_table.search([float(x) for x in query_embedding])
+            builder: Any = self.sentences_table.search(
+                [float(x) for x in query_embedding]
+            )
             builder = builder.metric("cosine")
             if document_key:
                 builder = builder.where(self._where_eq("document_key", document_key))
@@ -466,7 +483,7 @@ class VectorStore:
                 continue
 
             distance = float(row.get("_distance", 1.0))
-            score = 1.0 - (distance/2)  # Convert cosine distance to similarity score
+            score = 1.0 - (distance / 2)  # Convert cosine distance to similarity score
 
             meta = {
                 "document_key": row.get("document_key"),
@@ -494,13 +511,12 @@ class VectorStore:
         out: dict[str, str] = {}
         for sid in [str(i) for i in ids]:
             try:
-                row_list = (
-                    self._safe_select(
-                        self.sentences_table.search().where(self._where_eq("id", sid)).limit(1),
-                        ["id", "document"],
-                    )
-                    .to_list()
-                )
+                row_list = self._safe_select(
+                    self.sentences_table.search()
+                    .where(self._where_eq("id", sid))
+                    .limit(1),
+                    ["id", "document"],
+                ).to_list()
             except Exception:
                 continue
             if not row_list:
@@ -517,13 +533,12 @@ class VectorStore:
             return False
 
         try:
-            rows = (
-                self._safe_select(
-                    self.sentences_table.search().where(self._where_eq("document_key", document_key)).limit(1),
-                    ["id"],
-                )
-                .to_list()
-            )
+            rows = self._safe_select(
+                self.sentences_table.search()
+                .where(self._where_eq("document_key", document_key))
+                .limit(1),
+                ["id"],
+            ).to_list()
             return bool(rows)
         except Exception:
             return False

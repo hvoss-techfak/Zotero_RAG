@@ -59,22 +59,36 @@ class Config:
         self.WEBUI_HOST: str = os.getenv("WEBUI_HOST", self.APP_HOST)
 
         # DOI + Zotero Connector import settings
-        self.DOI_BIBTEX_BASE_URL: str = os.getenv("DOI_BIBTEX_BASE_URL", "https://doi.org/")
-        self.DOI_BIBTEX_TIMEOUT_SECONDS: int = _get_int("DOI_BIBTEX_TIMEOUT_SECONDS", 10)
+        self.DOI_BIBTEX_BASE_URL: str = os.getenv(
+            "DOI_BIBTEX_BASE_URL", "https://doi.org/"
+        )
+        self.DOI_BIBTEX_TIMEOUT_SECONDS: int = _get_int(
+            "DOI_BIBTEX_TIMEOUT_SECONDS", 10
+        )
 
         # Zotero Connector import endpoint is served by the local Zotero Connector.
         # Example: http://127.0.0.1:23119/connector/import
-        self.ZOTERO_CONNECTOR_IMPORT_PATH: str = os.getenv("ZOTERO_CONNECTOR_IMPORT_PATH", "/connector/import")
-        self.ZOTERO_CONNECTOR_TIMEOUT_SECONDS: int = _get_int("ZOTERO_CONNECTOR_TIMEOUT_SECONDS", 15)
+        self.ZOTERO_CONNECTOR_IMPORT_PATH: str = os.getenv(
+            "ZOTERO_CONNECTOR_IMPORT_PATH", "/connector/import"
+        )
+        self.ZOTERO_CONNECTOR_TIMEOUT_SECONDS: int = _get_int(
+            "ZOTERO_CONNECTOR_TIMEOUT_SECONDS", 15
+        )
 
         # Optional default target collection key when importing items via the connector.
         # If empty, Zotero decides where to place the new item.
-        self.ZOTERO_DEFAULT_IMPORT_COLLECTION_KEY: str = os.getenv("ZOTERO_DEFAULT_IMPORT_COLLECTION_KEY", "")
+        self.ZOTERO_DEFAULT_IMPORT_COLLECTION_KEY: str = os.getenv(
+            "ZOTERO_DEFAULT_IMPORT_COLLECTION_KEY", ""
+        )
 
         # Ollama settings
-        self.OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        self.OLLAMA_BASE_URL: str = os.getenv(
+            "OLLAMA_BASE_URL", "http://localhost:11434"
+        )
         self.EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "qwen3-embedding:8b")
-        self.RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "dengcao/Qwen3-Reranker-0.6B:Q8_0")
+        self.RERANKER_MODEL: str = os.getenv(
+            "RERANKER_MODEL", "dengcao/Qwen3-Reranker-0.6B:Q8_0"
+        )
 
         # Embedding dimensions: 0 means auto-detect from model
         self.EMBEDDING_DIMENSIONS: int = _get_int("EMBEDDING_DIMENSIONS", 1024)
@@ -84,13 +98,23 @@ class Config:
         self.DEFAULT_TOP_Y: int = _get_int("DEFAULT_TOP_Y", 5)
 
         # Storage paths
-        self.VECTOR_STORE_DIR = Path(os.getenv("VECTOR_STORE_DIR", str(self.__class__.VECTOR_STORE_DIR)))
-        self.PDF_CACHE_PATH = Path(os.getenv("PDF_CACHE_PATH", str(self.__class__.PDF_CACHE_PATH)))
+        self.VECTOR_STORE_DIR = Path(
+            os.getenv("VECTOR_STORE_DIR", str(self.__class__.VECTOR_STORE_DIR))
+        )
+        self.PDF_CACHE_PATH = Path(
+            os.getenv("PDF_CACHE_PATH", str(self.__class__.PDF_CACHE_PATH))
+        )
 
         # Embedding options
-        self.AUTO_EMBED_SENTENCES: bool = os.getenv("AUTO_EMBED_SENTENCES", "false").lower() == "true"
-        self.AUTO_REEMBED_INTERVAL_MINUTES: int = max(0, _get_int("AUTO_REEMBED_INTERVAL_MINUTES", 15))
-        self.EMBED_PROGRESS_INTERVAL_SEC: float = max(0.2, _get_float("EMBED_PROGRESS_INTERVAL_SEC", 1.0))
+        self.AUTO_EMBED_SENTENCES: bool = (
+            os.getenv("AUTO_EMBED_SENTENCES", "false").lower() == "true"
+        )
+        self.AUTO_REEMBED_INTERVAL_MINUTES: int = max(
+            0, _get_int("AUTO_REEMBED_INTERVAL_MINUTES", 15)
+        )
+        self.EMBED_PROGRESS_INTERVAL_SEC: float = max(
+            0.2, _get_float("EMBED_PROGRESS_INTERVAL_SEC", 1.0)
+        )
 
         # Threading for embedding
         workers = _get_int("MAX_EMBEDDING_WORKERS", 9)
