@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from flask import Flask, jsonify, render_template, request
 
 # Import the MCP server components - we need direct access to search
+from zoterorag.logging_setup import setup_logging
 from zoterorag.mcp_server import get_server
 
 
@@ -86,6 +87,26 @@ def search():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/embed", methods=["POST"])
+def trigger_embed():
+    """Trigger a background pass to embed any newly discovered documents."""
+    try:
+        server = get_server()
+
+        import asyncio
+        result = asyncio.run(server.embed_new_documents_now())
+        status_code = 202 if result.get("status") == "started" else 200
+        return jsonify(result), status_code
+
+    except RuntimeError as e:
+        if "not registered" in str(e):
+            return jsonify({"error": "MCP server not initialized"}), 503
+        raise
+    except Exception as e:
+        logger.exception("Embed trigger error")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/status", methods=["GET"])
 def status():
     """Get the embedding/collection status."""
@@ -108,10 +129,7 @@ def status():
 
 def run(host: str = "127.0.0.1", port: int = 23121, debug: bool = False):
     """Run the Flask web UI server."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
+    setup_logging()
     logger.info(f"Starting ZoteroRAG Web UI on http://{host}:{port}")
     app.run(host=host, port=port, debug=debug)
 

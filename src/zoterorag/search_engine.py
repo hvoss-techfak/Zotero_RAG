@@ -11,7 +11,6 @@ from .models import SearchResult, CitationReturnMode
 from .vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)  # Set to DEBUG for detailed tracing
 
 
 class SearchEngine:

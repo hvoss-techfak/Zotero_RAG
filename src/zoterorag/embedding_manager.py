@@ -3,10 +3,12 @@ import json
 import logging
 import os
 import random
+import sys
 import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Callable
 
@@ -20,7 +22,6 @@ from zoterorag.pdf_processor import PDFProcessor
 from zoterorag.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 class EmbeddingManager:
@@ -36,16 +37,27 @@ class EmbeddingManager:
         self._embedding_progress: EmbeddingStatus = EmbeddingStatus()
         self._progress_lock = threading.Lock()
 
+    @staticmethod
+    def _utc_now_iso() -> str:
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+    def _status_copy_locked(self) -> EmbeddingStatus:
+        return EmbeddingStatus(
+            total_documents=self._embedding_progress.total_documents,
+            processed_documents=self._embedding_progress.processed_documents,
+            embedded_sections=self._embedding_progress.embedded_sections,
+            embedded_sentences=self._embedding_progress.embedded_sentences,
+            pending_sections=self._embedding_progress.pending_sections,
+            is_running=self._embedding_progress.is_running,
+            failed_documents=self._embedding_progress.failed_documents,
+            started_at=self._embedding_progress.started_at,
+            finished_at=self._embedding_progress.finished_at,
+            last_error=self._embedding_progress.last_error,
+        )
+
     def get_embedding_status(self) -> EmbeddingStatus:
         with self._progress_lock:
-            return EmbeddingStatus(
-                total_documents=self._embedding_progress.total_documents,
-                processed_documents=self._embedding_progress.processed_documents,
-                embedded_sections=self._embedding_progress.embedded_sections,
-                embedded_sentences=self._embedding_progress.embedded_sentences,
-                pending_sections=self._embedding_progress.pending_sections,
-                is_running=self._embedding_progress.is_running,
-            )
+            return self._status_copy_locked()
 
     def _update_progress(self, status: EmbeddingStatus):
         with self._progress_lock:
@@ -58,9 +70,37 @@ class EmbeddingManager:
                     status.processed_documents,
                 )
 
-            self._embedding_progress.embedded_sections += status.embedded_sections
-            self._embedding_progress.embedded_sentences += status.embedded_sentences
+            self._embedding_progress.embedded_sections += max(0, status.embedded_sections)
+            self._embedding_progress.embedded_sentences += max(0, status.embedded_sentences)
+            self._embedding_progress.pending_sections = max(0, status.pending_sections)
+            self._embedding_progress.failed_documents += max(0, status.failed_documents)
             self._embedding_progress.is_running = status.is_running
+
+            if status.started_at:
+                self._embedding_progress.started_at = status.started_at
+            if status.finished_at:
+                self._embedding_progress.finished_at = status.finished_at
+            if status.last_error:
+                self._embedding_progress.last_error = status.last_error
+
+    def mark_document_completed(
+        self,
+        *,
+        embedded_sections: int = 0,
+        embedded_sentences: int = 0,
+        failed: bool = False,
+        last_error: str = "",
+    ) -> EmbeddingStatus:
+        with self._progress_lock:
+            self._embedding_progress.processed_documents += 1
+            self._embedding_progress.embedded_sections += max(0, embedded_sections)
+            self._embedding_progress.embedded_sentences += max(0, embedded_sentences)
+            self._embedding_progress.is_running = True
+            if failed:
+                self._embedding_progress.failed_documents += 1
+            if last_error:
+                self._embedding_progress.last_error = last_error
+            return self._status_copy_locked()
 
     def start_embedding_job(self, total_documents: int):
         with self._progress_lock:
@@ -68,11 +108,23 @@ class EmbeddingManager:
                 total_documents=total_documents,
                 processed_documents=0,
                 is_running=True,
+                started_at=self._utc_now_iso(),
+                finished_at="",
+                last_error="",
+                failed_documents=0,
             )
         logger.info(
             "[EmbeddingManager] Started embedding job for %s documents",
             total_documents,
         )
+
+    def finish_embedding_job(self, *, last_error: str = "") -> EmbeddingStatus:
+        with self._progress_lock:
+            self._embedding_progress.is_running = False
+            self._embedding_progress.finished_at = self._utc_now_iso()
+            if last_error:
+                self._embedding_progress.last_error = last_error
+            return self._status_copy_locked()
 
     @property
     def executor(self) -> ThreadPoolExecutor:
@@ -200,15 +252,9 @@ class EmbeddingManager:
                     document.zotero_key,
                 )
 
-                self._update_progress(
-                    EmbeddingStatus(
-                        processed_documents=self.get_embedding_status().processed_documents + 1,
-                        is_running=True,
-                    )
-                )
-
+                snapshot = self.mark_document_completed()
                 if callback:
-                    callback(EmbeddingStatus(is_running=True))
+                    callback(snapshot)
 
                 f: Future = Future()
                 f.set_result(None)
@@ -223,15 +269,9 @@ class EmbeddingManager:
                     document.zotero_key,
                 )
 
-                self._update_progress(
-                    EmbeddingStatus(
-                        processed_documents=self.get_embedding_status().processed_documents + 1,
-                        is_running=True,
-                    )
-                )
-
+                snapshot = self.mark_document_completed()
                 if callback:
-                    callback(EmbeddingStatus(is_running=True))
+                    callback(snapshot)
 
                 f: Future = Future()
                 f.set_result(None)
@@ -258,8 +298,12 @@ class EmbeddingManager:
             pdf_bytes = zotero_client.get_pdf_bytes(doc_key)
 
         if pdf_bytes is None:
+            snapshot = self.mark_document_completed(
+                failed=True,
+                last_error=f"No PDF available for document {doc_key}",
+            )
             if callback:
-                callback(EmbeddingStatus(is_running=False))
+                callback(snapshot)
             return
 
         temp_path = None
@@ -276,17 +320,17 @@ class EmbeddingManager:
                 self.vector_store.update_embedded_document(doc_key, len(sentences))
             except Exception as e:
                 logger.error("Failed to store embeddings for document %s: %s", doc_key, e)
-                if callback:
-                    callback(EmbeddingStatus(is_running=False))
-
-            if callback:
-                callback(
-                    EmbeddingStatus(
-                        embedded_sentences=len(sentences),
-                        processed_documents=self.get_embedding_status().processed_documents + 1,
-                        is_running=True,
-                    )
+                snapshot = self.mark_document_completed(
+                    failed=True,
+                    last_error=f"Failed to store embeddings for {doc_key}: {e}",
                 )
+                if callback:
+                    callback(snapshot)
+                return
+
+            snapshot = self.mark_document_completed(embedded_sentences=len(sentences))
+            if callback:
+                callback(snapshot)
 
             elapsed = time.time() - start_time
             logger.debug(
@@ -299,8 +343,12 @@ class EmbeddingManager:
 
         except Exception as e:
             logger.error("Failed to embed document %s: %s", document.zotero_key, e)
+            snapshot = self.mark_document_completed(
+                failed=True,
+                last_error=f"Failed to embed document {document.zotero_key}: {e}",
+            )
             if callback:
-                callback(EmbeddingStatus(is_running=False))
+                callback(snapshot)
         finally:
             if temp_path and temp_path.exists():
                 try:
@@ -327,14 +375,9 @@ class EmbeddingManager:
             self.vector_store.add_sentences(sentences, sent_embeddings, document_key=doc_key)
             self.vector_store.update_embedded_document(doc_key, len(sentences))
 
+            snapshot = self.mark_document_completed(embedded_sentences=len(sentences))
             if callback:
-                callback(
-                    EmbeddingStatus(
-                        embedded_sentences=len(sentences),
-                        processed_documents=self.get_embedding_status().processed_documents + 1,
-                        is_running=True,
-                    )
-                )
+                callback(snapshot)
 
             elapsed = time.time() - start_time
             logger.debug(
@@ -347,8 +390,12 @@ class EmbeddingManager:
 
         except Exception as e:
             logger.error("Failed to embed document %s: %s", document.zotero_key, e)
+            snapshot = self.mark_document_completed(
+                failed=True,
+                last_error=f"Failed to embed document {document.zotero_key}: {e}",
+            )
             if callback:
-                callback(EmbeddingStatus(is_running=False))
+                callback(snapshot)
 
     @classmethod
     def get_pdf_documents_from_directory(cls, pdf_dir: Path) -> List[tuple[Document, str]]:
@@ -396,12 +443,9 @@ class EmbeddingManager:
 
 
 if __name__ == "__main__":
-    import logging
+    from zoterorag.logging_setup import setup_logging
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    setup_logging(level=os.getenv("LOG_LEVEL", "WARNING"))
 
     import argparse
     parser = argparse.ArgumentParser(description="Run embedding without MCP server")

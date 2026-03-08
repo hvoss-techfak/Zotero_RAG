@@ -592,16 +592,18 @@ class TestZoteroToBibtexType:
 class TestGetDocumentsWithPdfs:
     """Test suite for get_documents_with_pdfs generator."""
     
+    @patch('zotero_client.ZoteroClient.get_group_ids')
     @patch('zotero_client.ZoteroClient.get_all_items')
     @patch('zotero_client.ZoteroClient.parse_item_to_document')
-    def test_yields_documents_with_pdfs(self, mock_parse, mock_get_all):
+    def test_yields_documents_with_pdfs(self, mock_parse, mock_get_all, mock_get_group_ids):
         """Test yielding documents with PDFs."""
         # Setup mocks
         mock_get_all.return_value = iter([
             {"key": "item1", "data": {}},
             {"key": "item2", "data": {}}
         ])
-        
+        mock_get_group_ids.return_value = []
+
         doc1 = Document(zotero_key="doc1", title="Doc 1", authors=[], pdf_path=None)
         doc2 = None  # No PDF
         
@@ -674,9 +676,10 @@ class TestGetItemMetadata:
         mock_resolve.return_value = ("ITEM123", None)
         
         mock_get_item.return_value = ({
+            "key": "ITEM123",
             "data": {
                 "title": "Test Title",
-                "creators": [{"firstName": "John", "lastName": "Doe"}],
+                "creators": [{"firstName": "John", "lastName": "Doe", "creatorType": "author"}],
                 "date": "2024-01-15",
                 "itemType": "journalArticle"
             }
@@ -688,59 +691,54 @@ class TestGetItemMetadata:
         assert result is not None
         assert result["title"] == "Test Title"
         assert len(result["authors"]) > 0
+        assert result["bibtex"].startswith("@article")
 
 
-class TestGetTotalItemsCount:
-    """Test suite for get_total_items_count method."""
-    
-    @patch('requests.Session.get')
-    def test_get_total_items_count(self, mock_get):
-        """Test total items count retrieval."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.headers = {"Total-Results": "500"}
-        mock_get.return_value = mock_response
-        
+class TestBibtexGeneration:
+    def test_item_to_bibtex_uses_creator_roles_and_article_fields(self):
         client = ZoteroClient()
-        result = client.get_total_items_count()
-        
-        assert result == 500
-    
-    @patch('requests.Session.get')
-    def test_get_total_items_count_error(self, mock_get):
-        """Test error handling."""
-        mock_get.side_effect = requests.RequestException("Error")
-        
-        client = ZoteroClient()
-        result = client.get_total_items_count()
-        
-        assert result == -1
+        item = {
+            "key": "ITEM123",
+            "data": {
+                "itemType": "journalArticle",
+                "title": "Production Ready Search",
+                "creators": [
+                    {"firstName": "Jane", "lastName": "Doe", "creatorType": "author"},
+                    {"firstName": "Max", "lastName": "Editor", "creatorType": "editor"},
+                ],
+                "date": "2024-02-01",
+                "publicationTitle": "Journal of Search",
+                "volume": "12",
+                "issue": "3",
+                "pages": "10-20",
+                "DOI": "10.1000/test",
+            },
+        }
 
+        bibtex = client.item_to_bibtex(item)
 
-class TestGetItemsSince:
-    """Test suite for get_items_since method."""
-    
-    @patch('requests.Session.get')
-    def test_get_items_since(self, mock_get):
-        """Test getting items since version."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = [{"key": "changed1"}]
-        mock_get.return_value = mock_response
-        
+        assert bibtex.startswith("@article{Doe2024ProductionReady")
+        assert "author = {Doe, Jane}" in bibtex
+        assert "editor = {Editor, Max}" in bibtex
+        assert "journal = {Journal of Search}" in bibtex
+        assert "doi = {10.1000/test}" in bibtex
+
+    def test_item_to_bibtex_uses_booktitle_for_conference_paper(self):
         client = ZoteroClient()
-        result = client.get_items_since(since=100)
-        
-        assert len(result) == 1
-    
-    @patch('requests.Session.get')
-    def test_get_items_since_error(self, mock_get):
-        """Test error handling."""
-        mock_response = Mock()
-        mock_response.status_code = 400
-        mock_get.return_value = mock_response
-        
-        client = ZoteroClient()
-        result = client.get_items_since(since=100)
-        
-        assert result == []
+        item = {
+            "key": "CONF123",
+            "data": {
+                "itemType": "conferencePaper",
+                "title": "A Conference Paper",
+                "creators": [{"name": "OpenAI Research", "creatorType": "author"}],
+                "date": "2023",
+                "proceedingsTitle": "Proceedings of the Test Conference",
+            },
+        }
+
+        bibtex = client.item_to_bibtex(item)
+
+        assert bibtex.startswith("@inproceedings")
+        assert "author = {OpenAI Research}" in bibtex
+        assert "booktitle = {Proceedings of the Test Conference}" in bibtex
+

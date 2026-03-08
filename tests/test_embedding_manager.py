@@ -169,6 +169,7 @@ class TestEmbeddingManager:
         assert status.total_documents == 25
         assert status.processed_documents == 0
         assert status.is_running is True
+        assert status.started_at
 
     def test_start_embedding_job_resets_previous_state(self, embedding_manager):
         """Test that start_embedding_job resets previous state."""
@@ -177,7 +178,9 @@ class TestEmbeddingManager:
             total_documents=100,
             processed_documents=50,
             embedded_sections=200,
-            is_running=True
+            is_running=True,
+            failed_documents=3,
+            last_error="old error",
         )
         
         embedding_manager.start_embedding_job(total_documents=10)
@@ -186,6 +189,29 @@ class TestEmbeddingManager:
         
         # New values should be set
         assert status.total_documents == 10
+        assert status.failed_documents == 0
+        assert status.last_error == ""
+
+    def test_mark_document_completed_updates_processed_and_failures(self, embedding_manager):
+        embedding_manager.start_embedding_job(total_documents=2)
+
+        snapshot = embedding_manager.mark_document_completed(
+            embedded_sentences=12,
+            failed=True,
+            last_error="pdf missing",
+        )
+
+        assert snapshot.processed_documents == 1
+        assert snapshot.embedded_sentences == 12
+        assert snapshot.failed_documents == 1
+        assert snapshot.last_error == "pdf missing"
+
+    def test_finish_embedding_job_sets_finished_at(self, embedding_manager):
+        embedding_manager.start_embedding_job(total_documents=1)
+        status = embedding_manager.finish_embedding_job()
+
+        assert status.is_running is False
+        assert status.finished_at
 
     # --- Test executor property ---
 
@@ -308,7 +334,7 @@ class TestEmbeddingManager:
         with patch("zoterorag.embedding_manager.VectorStore"):
             with patch("zoterorag.embedding_manager.PDFProcessor") as mock_pp_class:
                 mock_pp = MagicMock()
-                mock_pp.extract_quarter_sections.return_value = []
+                mock_pp.extract_sentences.return_value = []
                 mock_pp_class.return_value = mock_pp
 
                 manager = EmbeddingManager(mock_config)
@@ -316,7 +342,7 @@ class TestEmbeddingManager:
                 doc = Document(zotero_key="test", title="Test")
                 sentences = manager.process_document(doc, "test.pdf")
 
-                mock_pp.extract_quarter_sections.assert_called_once()
+                mock_pp.extract_sentences.assert_called_once_with("test.pdf", document_id="test")
                 assert sentences == []
 
     # --- Test embed_document_async ---
@@ -371,7 +397,7 @@ class TestEmbeddingManager:
         """Test that process_document handles nonexistent files gracefully."""
         with patch("zoterorag.embedding_manager.VectorStore"):
             with patch("zoterorag.embedding_manager.PDFProcessor") as mock_pp:
-                mock_pp.return_value.extract_quarter_sections.return_value = []
+                mock_pp.return_value.extract_sentences.return_value = []
 
                 manager = EmbeddingManager(mock_config)
 

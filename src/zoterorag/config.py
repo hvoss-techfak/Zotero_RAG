@@ -50,6 +50,14 @@ class Config:
         self.ZOTERO_API_KEY: str = os.getenv("ZOTERO_API_KEY", "")
         self.ZOTERO_LIBRARY_ID: str | None = os.getenv("ZOTERO_LIBRARY_ID")
 
+        # Logging
+        self.LOG_LEVEL: str = os.getenv("LOG_LEVEL", "WARNING")
+        self.NOISY_LOG_LEVEL: str = os.getenv("NOISY_LOG_LEVEL", "WARNING")
+
+        # Network / runtime binding
+        self.APP_HOST: str = os.getenv("APP_HOST", "127.0.0.1")
+        self.WEBUI_HOST: str = os.getenv("WEBUI_HOST", self.APP_HOST)
+
         # DOI + Zotero Connector import settings
         self.DOI_BIBTEX_BASE_URL: str = os.getenv("DOI_BIBTEX_BASE_URL", "https://doi.org/")
         self.DOI_BIBTEX_TIMEOUT_SECONDS: int = _get_int("DOI_BIBTEX_TIMEOUT_SECONDS", 10)
@@ -81,6 +89,8 @@ class Config:
 
         # Embedding options
         self.AUTO_EMBED_SENTENCES: bool = os.getenv("AUTO_EMBED_SENTENCES", "false").lower() == "true"
+        self.AUTO_REEMBED_INTERVAL_MINUTES: int = max(0, _get_int("AUTO_REEMBED_INTERVAL_MINUTES", 15))
+        self.EMBED_PROGRESS_INTERVAL_SEC: float = max(0.2, _get_float("EMBED_PROGRESS_INTERVAL_SEC", 1.0))
 
         # Threading for embedding
         workers = _get_int("MAX_EMBEDDING_WORKERS", 9)

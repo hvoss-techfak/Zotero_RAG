@@ -46,18 +46,84 @@ h1 {
     margin-bottom: 0.5rem;
 }
 
+h2 {
+    font-size: 1.2rem;
+}
+
 .subtitle {
     color: var(--text-secondary);
     font-size: 1.1rem;
 }
 
-/* Search Section */
-.search-section {
+.status-section,
+.search-section,
+#results-section {
     background: var(--card-bg);
     padding: 1.5rem;
     border-radius: var(--radius);
     box-shadow: var(--shadow-md);
     margin-bottom: 2rem;
+}
+
+.status-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.status-summary {
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+}
+
+#embed-now-button,
+#search-button {
+    padding: 0.75rem 1.25rem;
+    font-size: 1rem;
+    font-weight: 600;
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+#embed-now-button:hover,
+#search-button:hover {
+    background-color: var(--primary-hover);
+}
+
+#embed-now-button:disabled,
+#search-button:disabled {
+    background-color: var(--text-secondary);
+    cursor: not-allowed;
+}
+
+.progress-shell {
+    width: 100%;
+    height: 14px;
+    border-radius: 999px;
+    background: #e5e7eb;
+    overflow: hidden;
+    margin-bottom: 0.75rem;
+}
+
+.progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--primary-color), var(--success-color));
+    transition: width 0.3s ease;
+}
+
+.status-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
 }
 
 #search-form {
@@ -85,27 +151,6 @@ h1 {
     border-color: var(--primary-color);
 }
 
-#search-button {
-    padding: 0.75rem 1.5rem;
-    font-size: 1rem;
-    font-weight: 600;
-    background-color: var(--primary-color);
-    color: white;
-    border: none;
-    border-radius: var(--radius);
-    cursor: pointer;
-    transition: background-color 0.2s;
-}
-
-#search-button:hover {
-    background-color: var(--primary-hover);
-}
-
-#search-button:disabled {
-    background-color: var(--text-secondary);
-    cursor: not-allowed;
-}
-
 .options {
     display: flex;
     gap: 1.5rem;
@@ -131,7 +176,6 @@ h1 {
     width: 100px;
 }
 
-/* Tooltip */
 .tooltip {
     position: relative;
     cursor: help;
@@ -162,7 +206,6 @@ h1 {
     opacity: 1;
 }
 
-/* Loading */
 #loading {
     text-align: center;
     padding: 2rem;
@@ -182,14 +225,6 @@ h1 {
     to { transform: rotate(360deg); }
 }
 
-/* Results Section */
-#results-section {
-    background: var(--card-bg);
-    padding: 1.5rem;
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-md);
-}
-
 .results-header {
     display: flex;
     justify-content: space-between;
@@ -204,7 +239,6 @@ h1 {
     font-size: 0.9rem;
 }
 
-/* Result Card */
 .result-card {
     padding: 1rem;
     margin-bottom: 1rem;
@@ -241,6 +275,10 @@ h1 {
     line-height: 1.7;
 }
 
+.score-info {
+    margin-bottom: 0.75rem;
+}
+
 .relevance-score {
     display: inline-block;
     padding: 0.25rem 0.5rem;
@@ -251,7 +289,11 @@ h1 {
     margin-left: 0.5rem;
 }
 
-/* Citations Section */
+.relevance-score.alt {
+    background-color: var(--success-color);
+}
+
+.document-bibtex,
 .citations {
     margin-top: 0.75rem;
     padding-top: 0.75rem;
@@ -265,8 +307,8 @@ h1 {
     margin-bottom: 0.5rem;
 }
 
-.citation-item {
-    padding: 0.5rem;
+.bibtex-block {
+    padding: 0.75rem;
     background: white;
     border-left: 3px solid var(--primary-color);
     margin-bottom: 0.5rem;
@@ -274,13 +316,18 @@ h1 {
     font-family: 'Courier New', monospace;
     white-space: pre-wrap;
     word-break: break-word;
+    overflow-x: auto;
 }
 
-.citation-item:last-child {
-    margin-bottom: 0;
+.bibtex-block.compact {
+    padding: 0.5rem;
 }
 
-/* Error Section */
+.muted,
+.no-results {
+    color: var(--text-secondary);
+}
+
 #error-section {
     background: #fef2f2;
     border: 1px solid #fecaca;
@@ -293,12 +340,10 @@ h1 {
     color: var(--error-color);
 }
 
-/* Hidden Utility */
 .hidden {
     display: none !important;
 }
 
-/* Footer */
 footer {
     text-align: center;
     padding: 2rem;
@@ -306,21 +351,23 @@ footer {
     font-size: 0.9rem;
 }
 
-/* Responsive */
 @media (max-width: 600px) {
     h1 {
         font-size: 1.75rem;
     }
-    
+
+    .status-header,
     .search-input-wrapper {
         flex-direction: column;
     }
-    
+
+    #embed-now-button,
     #search-button {
         width: 100%;
     }
-    
-    .options {
+
+    .options,
+    .status-meta {
         flex-direction: column;
         gap: 0.75rem;
     }

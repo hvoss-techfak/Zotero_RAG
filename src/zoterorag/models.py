@@ -109,6 +109,10 @@ class EmbeddingStatus:
     embedded_sentences: int = 0
     pending_sections: int = 0
     is_running: bool = False
+    failed_documents: int = 0
+    started_at: str = ""
+    finished_at: str = ""
+    last_error: str = ""
 
     @property
     def progress_percentage(self) -> float:
@@ -116,11 +120,37 @@ class EmbeddingStatus:
 
         if self.total_documents == 0:
             return 0.0
-        return (self.processed_documents / self.total_documents) * 100
+        return min(100.0, (self.processed_documents / self.total_documents) * 100)
+
+    @property
+    def pending_documents(self) -> int:
+        """Return the number of documents still pending in the active job."""
+
+        return max(0, self.total_documents - self.processed_documents)
+
+    def to_dict(self) -> dict:
+        """Return a JSON-friendly representation of the status."""
+
+        return {
+            "total_documents": self.total_documents,
+            "processed_documents": self.processed_documents,
+            "embedded_sections": self.embedded_sections,
+            "embedded_sentences": self.embedded_sentences,
+            "pending_sections": self.pending_sections,
+            "pending_documents": self.pending_documents,
+            "is_running": self.is_running,
+            "failed_documents": self.failed_documents,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "last_error": self.last_error,
+            "progress_percentage": self.progress_percentage,
+        }
 
     def __str__(self) -> str:
+        state = "running" if self.is_running else "idle"
+        failure_suffix = f", Failures: {self.failed_documents}" if self.failed_documents else ""
         return (
             f"Progress: {self.processed_documents}/{self.total_documents} "
             f"({self.progress_percentage:.1f}%) - Sections: {self.embedded_sections}, "
-            f"Sentences: {self.embedded_sentences}"
+            f"Sentences: {self.embedded_sentences}, State: {state}{failure_suffix}"
         )

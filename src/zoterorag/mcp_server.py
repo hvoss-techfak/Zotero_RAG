@@ -1,7 +1,8 @@
 """MCP server for ZoteroRAG."""
 
 import logging
-from typing import Optional
+import threading
+from typing import Optional, Callable
 
 from fastmcp import FastMCP
 
@@ -14,8 +15,6 @@ from zoterorag.models import CitationReturnMode, SearchResult
 from zoterorag.reranker import Reranker
 
 logger = logging.getLogger(__name__)
-#set level to debug
-logger.setLevel(logging.DEBUG)
 
 
 class MCPZoteroServer:
@@ -33,45 +32,167 @@ class MCPZoteroServer:
         # Cache for document metadata to avoid repeated API calls
         self._metadata_cache: dict[str, dict] = {}
         self._auto_embed_done = False
+        self._embedding_lock = threading.Lock()
+        self._embedding_thread: threading.Thread | None = None
+        self._status_listeners: list[Callable[[object], None]] = []
+        self._last_run_summary: str = "Idle"
+        self._next_auto_reembed_at: str = ""
+
+    def register_embedding_status_listener(self, listener: Callable[[object], None]) -> None:
+        """Register a callback notified whenever embedding progress changes."""
+
+        self._status_listeners.append(listener)
+
+    def set_next_auto_reembed_at(self, timestamp: str) -> None:
+        """Expose the next scheduled auto re-embed time for the UI/API."""
+
+        self._next_auto_reembed_at = timestamp
+
+    def _notify_embedding_status(self, status=None) -> None:
+        status = status or self.embedding_manager.get_embedding_status()
+        for listener in list(self._status_listeners):
+            try:
+                listener(status)
+            except Exception:
+                logger.debug("Embedding status listener failed", exc_info=True)
+
+    def _get_pending_documents(self) -> tuple[list, int]:
+        all_docs_with_pdfs = list(self.zotero_client.get_documents_with_pdfs())
+        if not all_docs_with_pdfs:
+            return [], 0
+
+        embedded = self.embedding_manager.vector_store.get_embedded_documents()
+        pending = []
+        for doc in all_docs_with_pdfs:
+            try:
+                if self.embedding_manager.vector_store.is_document_embedded(doc.zotero_key):
+                    continue
+            except Exception:
+                pass
+
+            if doc.zotero_key not in embedded or embedded.get(doc.zotero_key, 0) == 0:
+                pending.append(doc)
+
+        return pending, len(all_docs_with_pdfs)
+
+    def _run_background_embedding(self, trigger: str) -> None:
+        try:
+            pending, total_available = self._get_pending_documents()
+            if total_available == 0:
+                self._last_run_summary = "No Zotero documents with PDFs were found."
+                self._notify_embedding_status()
+                return
+
+            if not pending:
+                self._last_run_summary = "All documents are already embedded."
+                self._notify_embedding_status()
+                return
+
+            self.embedding_manager.start_embedding_job(len(pending))
+            self._next_auto_reembed_at = ""
+            self._last_run_summary = (
+                f"Embedding {len(pending)} new document(s) triggered by {trigger}."
+            )
+            self._notify_embedding_status()
+
+            futures = []
+            for doc in pending:
+                try:
+                    futures.append(
+                        self.embedding_manager.embed_document_async_with_client(
+                            doc,
+                            self.zotero_client,
+                            callback=self._notify_embedding_status,
+                        )
+                    )
+                except Exception as e:
+                    logger.error("Failed to submit %s for embedding: %s", doc.zotero_key, e)
+                    snapshot = self.embedding_manager.mark_document_completed(
+                        failed=True,
+                        last_error=f"Failed to submit {doc.zotero_key}: {e}",
+                    )
+                    self._notify_embedding_status(snapshot)
+
+            for future in futures:
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.warning("Background embedding future failed: %s", e)
+
+            final_status = self.embedding_manager.finish_embedding_job()
+            if final_status.failed_documents:
+                self._last_run_summary = (
+                    f"Embedding finished with {final_status.failed_documents} failed document(s)."
+                )
+            else:
+                self._last_run_summary = (
+                    f"Embedding finished successfully for {final_status.processed_documents} document(s)."
+                )
+            self._notify_embedding_status(final_status)
+        except Exception as e:
+            logger.exception("Background embedding run failed")
+            final_status = self.embedding_manager.finish_embedding_job(last_error=str(e))
+            self._last_run_summary = f"Embedding failed: {e}"
+            self._notify_embedding_status(final_status)
+        finally:
+            with self._embedding_lock:
+                self._embedding_thread = None
+
+    def start_background_embedding(self, trigger: str = "manual") -> dict:
+        """Start embedding any new documents in a background thread."""
+
+        with self._embedding_lock:
+            current_status = self.embedding_manager.get_embedding_status()
+            if current_status.is_running or (self._embedding_thread and self._embedding_thread.is_alive()):
+                return {
+                    "status": "already_running",
+                    "message": "A background embedding job is already running.",
+                }
+
+            self._embedding_thread = threading.Thread(
+                target=self._run_background_embedding,
+                args=(trigger,),
+                daemon=True,
+            )
+            self._embedding_thread.start()
+
+        return {
+            "status": "started",
+            "message": "Background embedding scan started.",
+            "trigger": trigger,
+        }
 
     async def start_auto_embedding(self):
         """Auto-start background embedding on server startup."""
         if self._auto_embed_done:
             return
-        
+
         try:
-            import asyncio
-            result = await self.sync_and_embed()
-            
-            # Log the status but don't block startup
-            if result.get("status") == "started":
-                logger.info(f"Auto-embedding started: {result.get('pending_count')} documents pending")
-            elif result.get("status") == "up_to_date":
-                logger.info("All documents already embedded")
-            else:
-                logger.info(f"Sync status: {result.get('status')}")
+            result = self.start_background_embedding(trigger="startup")
+            if result.get("status") == "already_running":
+                logger.info(result.get("message"))
         except Exception as e:
             logger.warning(f"Auto-embedding failed (non-blocking): {e}")
-        
+
         self._auto_embed_done = True
 
     def _get_metadata_for_key(self, item_key: str) -> dict:
         """Get cached or fresh metadata for an item."""
         logger.debug(f"_get_metadata_for_key called with key: {item_key}")
-        
+
         if item_key in self._metadata_cache:
             logger.debug(f"Found metadata in cache for key: {item_key}")
             return self._metadata_cache[item_key]
-        
+
         # Try to get from Zotero
         logger.debug(f"Calling zotero_client.get_item_metadata({item_key})")
         metadata = self.zotero_client.get_item_metadata(item_key)
         logger.debug(f"Got metadata result: {metadata}")
-        
+
         if metadata:
             self._metadata_cache[item_key] = metadata
             return metadata
-        
+
         # Return empty metadata structure
         logger.debug(f"No metadata found, returning empty structure for key: {item_key}")
         return {
@@ -238,6 +359,11 @@ class MCPZoteroServer:
             for doc in docs
         ]
 
+    async def embed_new_documents_now(self) -> dict:
+        """Trigger embedding of newly discovered documents immediately."""
+
+        return self.start_background_embedding(trigger="manual")
+
     async def start(self):
         """Start the MCP server with auto-embedding."""
         # Trigger background embedding (non-blocking)
@@ -322,9 +448,15 @@ class MCPZoteroServer:
         """Get current embedding statistics."""
         stats = self.search_engine.get_stats()
         embedded_docs = self.embedding_manager.vector_store.get_embedded_documents()
+        progress = self.embedding_manager.get_embedding_status()
         return {
             **stats,
-            "documents": list(embedded_docs.keys())
+            **progress.to_dict(),
+            "documents": sorted(embedded_docs.keys()),
+            "state": "running" if progress.is_running else "idle",
+            "last_run_summary": self._last_run_summary,
+            "auto_reembed_interval_minutes": self.config.AUTO_REEMBED_INTERVAL_MINUTES,
+            "next_auto_reembed_at": self._next_auto_reembed_at,
         }
 
     async def delete_document(self, document_key: str) -> dict:
@@ -510,7 +642,9 @@ async def import_item_by_doi(doi: str, collection_key: Optional[str] = None) -> 
 
 def main() -> None:
     """Run the FastMCP server (stdio)."""
-    logging.basicConfig(level=logging.INFO)
+    from zoterorag.logging_setup import setup_logging
+
+    setup_logging()
 
     config = Config()
     server = MCPZoteroServer(config)

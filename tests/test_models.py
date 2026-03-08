@@ -206,7 +206,11 @@ class TestEmbeddingStatus:
         assert status.embedded_sentences == 0
         assert status.pending_sections == 0
         assert status.is_running is False
-    
+        assert status.failed_documents == 0
+        assert status.started_at == ""
+        assert status.finished_at == ""
+        assert status.last_error == ""
+
     def test_create_embedding_status_full(self):
         """Test creating embedding status with all fields."""
         status = EmbeddingStatus(
@@ -215,7 +219,11 @@ class TestEmbeddingStatus:
             embedded_sections=100,
             embedded_sentences=500,
             pending_sections=20,
-            is_running=True
+            is_running=True,
+            failed_documents=1,
+            started_at="2026-03-08T10:00:00+00:00",
+            finished_at="",
+            last_error="pdf missing",
         )
         
         assert status.total_documents == 10
@@ -224,7 +232,9 @@ class TestEmbeddingStatus:
         assert status.embedded_sentences == 500
         assert status.pending_sections == 20
         assert status.is_running is True
-    
+        assert status.failed_documents == 1
+        assert status.last_error == "pdf missing"
+
     def test_progress_percentage_zero_total(self):
         """Test progress percentage when total is zero."""
         status = EmbeddingStatus(total_documents=0, processed_documents=0)
@@ -263,8 +273,19 @@ class TestEmbeddingStatus:
         
         result = str(status)
         
-        # Should still produce a valid string
         assert isinstance(result, str)
+
+    def test_pending_documents_property(self):
+        status = EmbeddingStatus(total_documents=8, processed_documents=3)
+        assert status.pending_documents == 5
+
+    def test_embedding_status_to_dict(self):
+        status = EmbeddingStatus(total_documents=4, processed_documents=2, failed_documents=1)
+        data = status.to_dict()
+
+        assert data["pending_documents"] == 2
+        assert data["progress_percentage"] == 50.0
+        assert data["failed_documents"] == 1
 
 
 class TestModelEdgeCases:

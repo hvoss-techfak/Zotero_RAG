@@ -3,35 +3,32 @@
 
 services:
   zoterorag:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zoterorag:latest
     ports:
-      - "23120:23120"  # MCP server port
+      - "23120:23120"
+      - "23121:23121"
     volumes:
-      - ./data:/app/data  # Persist PDFs and vector store
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
     environment:
-      - ZOTERO_API_URL=http://host.docker.internal:23119  # Zotero local API
-      - ZOTERO_DATA_DIR=/app/data/pdfs
-      - VECTOR_STORE_DIR=/app/data/vector_store
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434  # Ollama for embeddings/reranking
+      APP_HOST: 0.0.0.0
+      WEBUI_HOST: 0.0.0.0
+      ZOTERO_API_URL: ${ZOTERO_API_URL:-http://host.docker.internal:23119}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      VECTOR_STORE_DIR: /app/data/vector_store
+      PDF_CACHE_PATH: /app/data/pdfs
+      LOG_LEVEL: ${LOG_LEVEL:-WARNING}
+      NOISY_LOG_LEVEL: ${NOISY_LOG_LEVEL:-WARNING}
+      AUTO_REEMBED_INTERVAL_MINUTES: ${AUTO_REEMBED_INTERVAL_MINUTES:-15}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
-# Optional: Ollama service for embeddings and reranking
-# Uncomment if you want to run Ollama in Docker
-#
-# ollama:
-#   image: ollama/ollama:latest
-#   ports:
-#     - "11434:11434"
-#   volumes:
-#     - ollama_data:/root/.ollama
-#   restart: unless-stopped
-
-volumes:
-  # Named volume for persistent data (PDFs and vector store)
-  zotero_data:
-
-# Uncomment if using Ollama in Docker
-# volumes:
-#   ollama_data:
+# If your Docker installation cannot reach host.docker.internal on Linux,
+# an alternative is to run the container with host networking instead.
+# That looks like:
+#   network_mode: host
+# and then you should remove the `ports:` section above.

@@ -13,7 +13,6 @@ import lancedb
 from .models import Sentence
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)  # Set to DEBUG for detailed internal state logs
 
 
 class VectorStore:
@@ -41,7 +40,6 @@ class VectorStore:
         self._detected_sentence_dim: int | None = None
         self._detect_dimensions()
         self.index_lock = threading.Lock()
-
 
     def _open_table_if_exists(self):
         try:

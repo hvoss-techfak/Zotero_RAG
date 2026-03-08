@@ -5,6 +5,8 @@ It supports both user library and group libraries.
 """
 
 import logging
+import re
+import unicodedata
 import requests
 from pathlib import Path
 from typing import Generator
@@ -961,130 +963,147 @@ class ZoteroClient:
             return response.json()
         return []
 
+    def _clean_bibtex_value(self, value: str | None) -> str:
+        """Normalize free-text values before rendering them into BibTeX."""
+
+        if not value:
+            return ""
+        cleaned = re.sub(r"\s+", " ", str(value)).strip()
+        return cleaned.replace("\\", "\\\\")
+
+    def _extract_year(self, value: str | None) -> str:
+        if not value:
+            return ""
+        match = re.search(r"\b(19|20)\d{2}\b", str(value))
+        return match.group(0) if match else ""
+
+    def _normalize_bibtex_token(self, value: str | None) -> str:
+        if not value:
+            return ""
+        ascii_value = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"[^A-Za-z0-9]+", "", ascii_value)
+
+    def _creator_to_bibtex_name(self, creator: dict) -> str:
+        corporate_name = self._clean_bibtex_value(creator.get("name"))
+        if corporate_name:
+            return corporate_name
+
+        first_name = self._clean_bibtex_value(creator.get("firstName"))
+        last_name = self._clean_bibtex_value(creator.get("lastName"))
+        if first_name and last_name:
+            return f"{last_name}, {first_name}"
+        return last_name or first_name
+
+    def _append_bibtex_field(self, fields: list[str], name: str, value: str | None) -> None:
+        cleaned = self._clean_bibtex_value(value)
+        if cleaned:
+            fields.append(f"  {name} = {{{cleaned}}},")
+
+    def _build_bibtex_key(self, item: dict) -> str:
+        data = item.get("data", {})
+        key = item.get("key", "item")
+        creators = data.get("creators", [])
+        author_seed = ""
+        if creators:
+            author_seed = (
+                creators[0].get("lastName")
+                or creators[0].get("name")
+                or creators[0].get("firstName")
+                or ""
+            )
+        title = data.get("title", "")
+        year = self._extract_year(data.get("date"))
+        title_words = [
+            self._normalize_bibtex_token(word)
+            for word in re.split(r"\W+", title)
+            if len(word) > 2
+        ]
+        title_seed = "".join(title_words[:2])
+        cite_key = f"{self._normalize_bibtex_token(author_seed)}{year}{title_seed}"
+        return cite_key or self._normalize_bibtex_token(key) or "item"
+
+    def _bibtex_type_for_item(self, data: dict) -> str:
+        item_type = data.get("itemType", "misc")
+        if item_type == "thesis":
+            thesis_type = (data.get("thesisType") or "").lower()
+            if "master" in thesis_type:
+                return "mastersthesis"
+            return "phdthesis"
+        return self._zotero_to_bibtex_type(item_type)
+
     def item_to_bibtex(self, item: dict) -> str:
-        """Convert a Zotero item to BibTeX format.
-        
-        Args:
-            item: Zotero API item dictionary
-            
-        Returns:
-            BibTeX entry string
-        """
+        """Convert a Zotero item to a BibTeX entry."""
         data = item.get("data", {})
         key = item.get("key", "")
-        
-        # Determine entry type based on Zotero item type
         item_type = data.get("itemType", "misc")
-        bibtex_type = self._zotero_to_bibtex_type(item_type)
-        
-        # Create citation key (author_year_title format)
-        first_author = ""
+        bibtex_type = self._bibtex_type_for_item(data)
+        cite_key = self._build_bibtex_key(item)
+        year = self._extract_year(data.get("date"))
+
         creators = data.get("creators", [])
-        if creators:
-            last_name = creators[0].get("lastName", "")
-            if last_name:
-                first_author = last_name.split()[-1]  # Get last part of last name
-        
-        date = data.get("date", "")
-        year = ""
-        if date:
-            # Try to extract year from various date formats
-            import re
-            year_match = re.search(r'\b(19|20)\d{2}\b', date)
-            if year_match:
-                year = year_match.group()
-        
-        title = data.get("title", "Untitled")
-        # Truncate title for citation key (first 15 chars, alphanumeric only)
-        cite_key_base = f"{first_author}{year}"
-        if not cite_key_base:
-            cite_key_base = key[:8]
-        cite_key = cite_key_base.replace(" ", "") or key[:8]
-        
-        bibtex_fields = []
-        
-        # Title
-        if title and title != "Untitled":
-            bibtex_fields.append(f"  title = {{{title}}},")
-        
-        # Authors
-        if creators:
-            author_str = " and ".join(
-                f"{c.get('lastName', '')}, {c.get('firstName', '')}".strip()
-                for c in creators
-                if c.get("lastName") or c.get("firstName")
-            )
-            if author_str:
-                bibtex_fields.append(f"  author = {{{author_str}}},")
-        
-        # Year
-        if year:
-            bibtex_fields.append(f"  year = {{{year}}},")
-        
-        # Date added (for accession number)
-        date_added = data.get("dateAdded", "")
-        if date_added:
-            bibtex_fields.append(f"  date = {{{date_added}}},")
-        
-        # Journal/Publication
-        publication = data.get("publicationTitle", "") or data.get("journalAbbreviation", "")
-        if publication:
-            bibtex_fields.append(f"  journal = {{{publication}}},")
-        
-        # Publisher
-        publisher = data.get("publisher", "")
-        if publisher:
-            bibtex_fields.append(f"  publisher = {{{publisher}}},")
-        
-        # Volume/Issue
-        volume = data.get("volume", "")
-        if volume:
-            bibtex_fields.append(f"  volume = {{{volume}}},")
-        
-        issue = data.get("issue", "")
-        if issue:
-            bibtex_fields.append(f"  number = {{{issue}}},")
-        
-        pages = data.get("pages", "")
-        if pages:
-            bibtex_fields.append(f"  pages = {{{pages}}},")
-        
-        # DOI
-        doi = data.get("DOI", "")
-        if doi:
-            bibtex_fields.append(f"  doi = {{{doi}}},")
-        
-        # URL
-        url = data.get("url", "")
-        if url:
-            bibtex_fields.append(f"  url = {{{url}}},")
-        
-        # ISBN/ISSN
-        isbn = data.get("ISBN", "")
-        if isbn:
-            bibtex_fields.append(f"  isbn = {{{isbn}}},")
-        
-        issn = data.get("ISSN", "")
-        if issn:
-            bibtex_fields.append(f"  issn = {{{issn}}},")
-        
-        # Abstract
-        abstract = data.get("abstractNote", "")
-        if abstract:
-            # Truncate long abstracts for BibTeX
-            if len(abstract) > 500:
-                abstract = abstract[:497] + "..."
-            bibtex_fields.append(f"  abstract = {{{abstract}}},")
-        
-        # Note
-        note = data.get("note", "")
-        if note:
-            bibtex_fields.append(f"  note = {{{note}}},")
-        
-        # Zotero key as identifier
-        bibtex_fields.append(f"  zotero_key = {{{key}}},")
-        
-        return f"@{bibtex_type}{{{cite_key},\n" + "\n".join(bibtex_fields) + "\n}}"
+        author_types = {
+            "author", "inventor", "programmer", "artist", "podcaster", "presenter", "contributor"
+        }
+        editor_types = {"editor", "seriesEditor"}
+        authors = [
+            self._creator_to_bibtex_name(c)
+            for c in creators
+            if (c.get("creatorType") or "author") in author_types and self._creator_to_bibtex_name(c)
+        ]
+        editors = [
+            self._creator_to_bibtex_name(c)
+            for c in creators
+            if c.get("creatorType") in editor_types and self._creator_to_bibtex_name(c)
+        ]
+
+        publication = data.get("publicationTitle") or data.get("journalAbbreviation")
+        booktitle = data.get("proceedingsTitle") or data.get("bookTitle") or data.get("conferenceName")
+        institution = data.get("institution") or data.get("publisher")
+        school = data.get("university") or data.get("publisher")
+
+        fields: list[str] = []
+        self._append_bibtex_field(fields, "title", data.get("title"))
+        if authors:
+            self._append_bibtex_field(fields, "author", " and ".join(authors))
+        if editors:
+            self._append_bibtex_field(fields, "editor", " and ".join(editors))
+        self._append_bibtex_field(fields, "year", year)
+
+        full_date = self._clean_bibtex_value(data.get("date"))
+        if full_date and full_date != year:
+            self._append_bibtex_field(fields, "date", full_date)
+
+        if bibtex_type == "article":
+            self._append_bibtex_field(fields, "journal", publication)
+        elif bibtex_type in {"inproceedings", "incollection", "inreference"}:
+            self._append_bibtex_field(fields, "booktitle", booktitle or publication)
+        elif bibtex_type in {"techreport"}:
+            self._append_bibtex_field(fields, "institution", institution)
+        elif bibtex_type in {"phdthesis", "mastersthesis"}:
+            self._append_bibtex_field(fields, "school", school)
+        elif bibtex_type == "misc":
+            self._append_bibtex_field(fields, "howpublished", data.get("websiteTitle") or publication)
+
+        self._append_bibtex_field(fields, "publisher", data.get("publisher"))
+        self._append_bibtex_field(fields, "volume", data.get("volume"))
+        self._append_bibtex_field(fields, "number", data.get("issue") or data.get("seriesNumber"))
+        self._append_bibtex_field(fields, "pages", data.get("pages"))
+        self._append_bibtex_field(fields, "series", data.get("series"))
+        self._append_bibtex_field(fields, "edition", data.get("edition"))
+        self._append_bibtex_field(fields, "address", data.get("place"))
+        self._append_bibtex_field(fields, "doi", data.get("DOI"))
+        self._append_bibtex_field(fields, "url", data.get("url"))
+        self._append_bibtex_field(fields, "isbn", data.get("ISBN"))
+        self._append_bibtex_field(fields, "issn", data.get("ISSN"))
+
+        abstract = self._clean_bibtex_value(data.get("abstractNote"))
+        if len(abstract) > 500:
+            abstract = abstract[:497] + "..."
+        self._append_bibtex_field(fields, "abstract", abstract)
+        self._append_bibtex_field(fields, "note", data.get("note"))
+        self._append_bibtex_field(fields, "zotero_key", key)
+
+        return f"@{bibtex_type}{{{cite_key},\n" + "\n".join(fields) + "\n}}"
 
     def _zotero_to_bibtex_type(self, item_type: str) -> str:
         """Map Zotero item types to BibTeX entry types."""

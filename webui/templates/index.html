@@ -14,6 +14,24 @@
         </header>
 
         <main>
+            <section class="status-section">
+                <div class="status-header">
+                    <div>
+                        <h2>Embedding status</h2>
+                        <p id="embed-summary" class="status-summary">Checking current background embedding status…</p>
+                    </div>
+                    <button type="button" id="embed-now-button">Embed new documents now</button>
+                </div>
+                <div class="progress-shell" aria-label="Embedding progress">
+                    <div id="embed-progress-bar" class="progress-fill" style="width: 0%"></div>
+                </div>
+                <div class="status-meta">
+                    <span id="embed-progress-text">0 / 0 documents</span>
+                    <span id="embed-sentences-text">0 sentences embedded</span>
+                    <span id="embed-next-run">No auto re-embed scheduled yet</span>
+                </div>
+            </section>
+
             <section class="search-section">
                 <form id="search-form">
                     <div class="search-input-wrapper">
