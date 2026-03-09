@@ -5,14 +5,6 @@ It embeds PDF-backed Zotero items with Ollama, serves search over the embedded s
 
 ![alt text](https://github.com/hvoss-techfak/Zotero_RAG/blob/main/images/zotero_rag.png "ZoteroRAG")
 
-## Important requirement
-
-**Zotero must be running on the host for this project to work correctly.**
-
-This project talks to Zotero's local API/connector (default: `http://127.0.0.1:23119`).
-If Zotero is not running, document discovery, PDF access, metadata lookup, and BibTeX import will fail.
-Enable "Allow other appplications on this computer to communicate with Zotero" in Zotero's "Advanced" settings to allow the app to connect.
-
 ## What you get
 
 - MCP server for Zotero-backed RAG search
@@ -30,6 +22,16 @@ Enable "Allow other appplications on this computer to communicate with Zotero" i
 - Zotero running locally on the host
 - Ollama running locally or on another reachable machine
 - The embedding and reranker models pulled in Ollama
+
+## Important requirement
+
+**Zotero must be running on the host for this project to work correctly.**
+
+This project talks to Zotero's local API/connector (default: `http://127.0.0.1:23119`).
+If Zotero is not running, document discovery, PDF access, metadata lookup, and BibTeX import will fail.
+Enable "Allow other appplications on this computer to communicate with Zotero" in Zotero's "Advanced" settings to allow the app to connect.
+
+
 
 Example:
 
