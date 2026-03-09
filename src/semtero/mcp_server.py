@@ -332,7 +332,7 @@ class MCPZoteroServer:
             except Exception:
                 logger.debug("Search progress callback failed", exc_info=True)
 
-        temp_top_sentences = max(100, top_sentences)
+        temp_top_sentences = 100
 
         emit_progress(
             {

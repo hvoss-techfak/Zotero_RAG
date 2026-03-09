@@ -165,6 +165,7 @@ class SearchEngine:
             query_embedding=query_embedding,
             document_key=document_key,
             top_k=max(1, int(top_sentences)),
+            include_documents=True,
         )
 
         if not ids:
@@ -179,7 +180,14 @@ class SearchEngine:
             )
             return []
 
-        id_to_text = self.vector_store.get_sentence_texts_by_ids(ids)
+        id_to_text = {
+            str(meta.get("id", sid)): str(meta.get("document", ""))
+            for sid, meta in zip(ids, metadatas)
+            if meta.get("document")
+        }
+        missing_ids = [sid for sid in ids if sid not in id_to_text]
+        if missing_ids:
+            id_to_text.update(self.vector_store.get_sentence_texts_by_ids(missing_ids))
 
         emit_progress(
             {
@@ -192,17 +200,22 @@ class SearchEngine:
         )
 
         results: list[SearchResult] = []
+        progress_step = max(1, len(ids) // 10)
         for i, sid in enumerate(ids):
             text = id_to_text.get(sid, "")
-            emit_progress(
-                {
-                    "stage": "metadata_fetch",
-                    "percentage": 45 + int((i + 1) / len(ids) * 15),
-                    "message": f"Processing sentence {i + 1} of {len(ids)}",
-                    "detail": "Processing similar sentences and fetching metadata for sentence.",
-                    "similar_sentences": 0,
-                }
+            should_emit_item_progress = (
+                i == 0 or i == len(ids) - 1 or (i + 1) % progress_step == 0
             )
+            if should_emit_item_progress:
+                emit_progress(
+                    {
+                        "stage": "metadata_fetch",
+                        "percentage": 45 + int((i + 1) / len(ids) * 15),
+                        "message": f"Processing sentence {i + 1} of {len(ids)}",
+                        "detail": "Processing similar sentences and fetching metadata for sentence.",
+                        "similar_sentences": 0,
+                    }
+                )
             if not text:
                 continue
 

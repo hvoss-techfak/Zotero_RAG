@@ -21,6 +21,7 @@ class VectorStore:
     """LanceDB wrapper for storing and retrieving sentence embeddings."""
 
     _TABLE_NAME = "sentences"
+    _ID_FETCH_CHUNK_SIZE = 256
     _SUPPORTED_INDEX_TYPES: set[IndexType] = {
         "IVF_HNSW_SQ",
         "IVF_RQ",
@@ -79,6 +80,38 @@ class VectorStore:
     def _where_in(cls, column: str, values: List[str]) -> str:
         escaped = ", ".join(f"'{cls._sql_quote(v)}'" for v in values)
         return f"{column} IN ({escaped})"
+
+    @staticmethod
+    def _dedupe_strs(values: List[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for value in values:
+            normalized = str(value)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            out.append(normalized)
+        return out
+
+    def _select_rows_by_ids(self, ids: List[str], columns: List[str]) -> list[dict]:
+        if not ids or not self.sentences_table:
+            return []
+
+        rows: list[dict] = []
+        unique_ids = self._dedupe_strs(ids)
+        for start in range(0, len(unique_ids), self._ID_FETCH_CHUNK_SIZE):
+            chunk = unique_ids[start : start + self._ID_FETCH_CHUNK_SIZE]
+            if not chunk:
+                continue
+            rows.extend(
+                self._safe_select(
+                    self.sentences_table.search().where(self._where_in("id", chunk)).limit(
+                        len(chunk)
+                    ),
+                    columns,
+                ).to_list()
+            )
+        return rows
 
     def _resolve_index_type(self) -> IndexType:
         configured = os.getenv("LANCEDB_INDEX_TYPE", "IVF_HNSW_SQ")
@@ -614,28 +647,27 @@ class VectorStore:
             return {}
 
         out: dict[str, dict] = {}
-        for sid in [str(i) for i in ids]:
-            try:
-                row_list = self._safe_select(
-                    self.sentences_table.search()
-                    .where(self._where_eq("id", sid))
-                    .limit(1),
-                    [
-                        "id",
-                        "document_key",
-                        "page",
-                        "page_section",
-                        "sentence_index",
-                        "citation_numbers",
-                        "referenced_texts",
-                        "referenced_bibtex",
-                    ],
-                ).to_list()
-            except Exception:
+        try:
+            rows = self._select_rows_by_ids(
+                ids,
+                [
+                    "id",
+                    "document_key",
+                    "page",
+                    "page_section",
+                    "sentence_index",
+                    "citation_numbers",
+                    "referenced_texts",
+                    "referenced_bibtex",
+                ],
+            )
+        except Exception:
+            return {}
+
+        for row in rows:
+            sid = str(row.get("id", ""))
+            if not sid:
                 continue
-            if not row_list:
-                continue
-            row = row_list[0]
             out[sid] = {
                 "document_key": row.get("document_key"),
                 "page": row.get("page"),
@@ -670,13 +702,18 @@ class VectorStore:
         if not self._prepare_for_read():
             return [], [], []
 
+        self._ensure_cosine_index()
+
         def _execute_query() -> list[dict]:
             builder: Any = self.sentences_table.search(
                 [float(x) for x in query_embedding]
             )
             builder = builder.metric("cosine")
             if document_key:
-                builder = builder.where(self._where_eq("document_key", document_key))
+                builder = builder.where(
+                    self._where_eq("document_key", document_key),
+                    prefilter=True,
+                )
 
             columns = [
                 "id",
@@ -738,19 +775,16 @@ class VectorStore:
             return {}
 
         out: dict[str, str] = {}
-        for sid in [str(i) for i in ids]:
-            try:
-                row_list = self._safe_select(
-                    self.sentences_table.search()
-                    .where(self._where_eq("id", sid))
-                    .limit(1),
-                    ["id", "document"],
-                ).to_list()
-            except Exception:
+        try:
+            rows = self._select_rows_by_ids(ids, ["id", "document"])
+        except Exception:
+            return {}
+
+        for row in rows:
+            sid = str(row.get("id", ""))
+            if not sid:
                 continue
-            if not row_list:
-                continue
-            doc = row_list[0].get("document")
+            doc = row.get("document")
             if doc is not None:
                 out[sid] = str(doc)
         return out
