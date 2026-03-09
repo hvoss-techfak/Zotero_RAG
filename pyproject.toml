@@ -1,7 +1,7 @@
 [project]
-name = "zoterorag"
+name = "semtero"
 version = "0.1.0"
-description = "MCP server for RAG search in Zotero library using Ollama"
+description = "SemTero MCP server for RAG search in your Zotero library"
 requires-python = ">=3.12"
 dependencies = [
     "requests>=2.31",

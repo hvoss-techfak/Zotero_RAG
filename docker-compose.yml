@@ -1,12 +1,12 @@
-# ZoteroRAG - MCP Server for Zotero
+# SemTero - MCP Server for Zotero
 # Usage: docker-compose up -d
 
 services:
-  zoterorag:
+  semtero:
     build:
       context: .
       dockerfile: Dockerfile
-    image: zoterorag:latest
+    image: semtero:latest
     ports:
       - "23120:23120"
       - "23121:23121"

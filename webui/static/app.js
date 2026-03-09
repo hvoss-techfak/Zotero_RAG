@@ -1,5 +1,5 @@
 /**
- * ZoteroRAG Search UI - Client-side JavaScript
+ * SemTero Search UI - Client-side JavaScript
  */
 
 document.addEventListener('DOMContentLoaded', function() {

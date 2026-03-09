@@ -10,7 +10,6 @@ import os
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from pathlib import Path
 from semtero.config import Config
 from semtero.zotero_client import ZoteroClient
 from semtero.vector_store import VectorStore
@@ -22,7 +21,7 @@ def main():
     client = ZoteroClient(api_url=Config.ZOTERO_API_URL)
     
     print("=" * 60)
-    print("ZoteroRAG Diagnostic Report")
+    print("SemTero Diagnostic Report")
     print("=" * 60)
     
     # Check connection
@@ -47,17 +46,14 @@ def main():
     # Get groups
     groups = client.get_groups()
     print(f"\n3. Found {len(groups)} group(s):")
-    
-    total_group_items = 0
+
     for g in groups[:10]:  # Show first 10
         gid = g.get("id", "unknown")
         name = g.get("data", {}).get("name", "Unnamed")
         
         try:
-            # Get count via first page header
-            items = client.get_group_items(gid, limit=1)
-            from requests import Response
-            # This won't work directly since get_group_items doesn't expose headers easily
+            # Touch the first page to confirm the group is reachable.
+            client.get_group_items(gid, limit=1)
             print(f"   - Group {gid}: {name}")
         except Exception as e:
             print(f"   - Group {gid}: {name} (error: {e})")
@@ -68,7 +64,7 @@ def main():
     # Count PDFs in local cache
     pdf_dir = Config.PDF_CACHE_PATH
     local_pdfs = list(pdf_dir.glob("*.pdf"))
-    print(f"\n4. Local PDF cache:")
+    print("\n4. Local PDF cache:")
     print(f"   Found {len(local_pdfs)} PDFs in {pdf_dir}")
     
     # Get all documents with PDFs from Zotero (this is the key check)
@@ -104,15 +100,15 @@ def main():
     
     missing = zotero_keys - local_keys
     extra_local = local_keys - zotero_keys
-    
-    print(f"\n6. Comparison:")
+
+    print("\n6. Comparison:")
     print(f"   In Zotero: {len(zotero_keys)}")
     print(f"   Locally cached: {len(local_keys)}")
     print(f"   Missing from cache: {len(missing)}")
     print(f"   Extra local files (not in Zotero): {len(extra_local)}")
     
     if missing:
-        print(f"\n7. First 20 missing PDFs:")
+        print("\n7. First 20 missing PDFs:")
         for key in sorted(missing)[:20]:
             # Find the doc to show title
             doc = next((d for d in docs_with_pdfs if d.zotero_key == key), None)
@@ -125,8 +121,8 @@ def main():
     # Already imported at top
     vs = VectorStore(str(Config.VECTOR_STORE_DIR))
     embedded = vs.get_embedded_documents()
-    
-    print(f"\n8. Embedding status:")
+
+    print("\n8. Embedding status:")
     print(f"   Documents in vector store: {len(embedded)}")
     
     zero_sections = [k for k, v in embedded.items() if v == 0]

@@ -4,7 +4,7 @@
 SemTero is a local RAG stack for your Zotero library.
 It embeds PDF-backed Zotero items with Ollama, enables semantic search over the embedded sentences, and exposes a small web UI and MCP server for you.
 
-![alt text](https://github.com/hvoss-techfak/Zotero_RAG/blob/main/images/zotero_rag.png "SemTero")
+![SemTero UI](images/semtero.png "SemTero")
 
 ## What you get
 
@@ -212,12 +212,12 @@ NOISY_LOG_LEVEL=WARNING
 ## Project layout
 
 - `main.py` — main runtime entrypoint
-- `src/zoterorag/` — app core
+- `src/semtero/` — app core
 - `webui/` — Flask UI and static assets
 - `tests/` — automated tests
 - `Dockerfile` / `docker-compose.yml` — containerized execution
 
 ## License
 
-Zotero-Rag © 2026 by Hendric Voss is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
+SemTero © 2026 by Hendric Voss is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
 The software is provided as-is and comes with no warranty or guarantee of support.

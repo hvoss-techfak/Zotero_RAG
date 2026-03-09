@@ -1,4 +1,4 @@
-"""MCP server for ZoteroRAG."""
+"""MCP server for SemTero."""
 
 import logging
 import threading
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class MCPZoteroServer:
-    """MCP server exposing Zotero RAG tools."""
+    """MCP server exposing SemTero tools."""
 
     def __init__(self, config: Config):
         self.config = config
@@ -720,7 +720,7 @@ class MCPZoteroServer:
 
 # --- FastMCP wiring ---
 
-mcp = FastMCP("ZoteroRAG")
+mcp = FastMCP("SemTero")
 
 # Global server instance, set by main.py during startup.
 _SERVER: MCPZoteroServer | None = None

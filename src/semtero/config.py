@@ -1,4 +1,4 @@
-"""Configuration management for ZoteroRAG."""
+"""Configuration management for SemTero."""
 
 import os
 import shutil

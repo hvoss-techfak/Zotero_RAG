@@ -1,4 +1,4 @@
-"""Data models for ZoteroRAG."""
+"""Data models for SemTero."""
 
 from dataclasses import dataclass, field
 from pathlib import Path

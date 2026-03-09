@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Web UI for ZoteroRAG search.
+"""Web UI for SemTero search.
 
 Provides a web interface to search through embedded Zotero documents.
 Run this alongside main.py or import and call run() to start the server.
@@ -236,7 +236,7 @@ def status():
 def run(host: str = "127.0.0.1", port: int = 23121, debug: bool = False):
     """Run the Flask web UI server."""
     setup_logging()
-    logger.info(f"Starting ZoteroRAG Web UI on http://{host}:{port}")
+    logger.info(f"Starting SemTero Web UI on http://{host}:{port}")
     app.run(host=host, port=port, debug=debug)
 
 

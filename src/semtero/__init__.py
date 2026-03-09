@@ -1,3 +1,3 @@
-"""ZoteroRAG - MCP server for RAG search in Zotero library."""
+"""SemTero - MCP server for RAG search in Zotero library."""
 
 __version__ = "0.1.0"

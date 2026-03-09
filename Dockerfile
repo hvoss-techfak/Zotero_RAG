@@ -1,4 +1,4 @@
-# ZoteroRAG - MCP Server for Zotero
+# SemTero - MCP Server for Zotero
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

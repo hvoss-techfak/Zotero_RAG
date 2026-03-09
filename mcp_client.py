@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MCP Client - Test script to call ZoteroRAG MCP server methods.
+"""MCP Client - Test script to call SemTero MCP server methods.
 
 Usage:
     uv run mcp_client.py --search QUERY     # Connect via SSE to running server
@@ -249,7 +249,7 @@ async def run_documents_with_pdfs(client: Client):
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="ZoteroRAG MCP Client")
+    parser = argparse.ArgumentParser(description="SemTero MCP Client")
     parser.add_argument(
         "--search", "-s",
         type=str,
@@ -317,7 +317,7 @@ async def main():
         # Legacy behavior: spawn a new server process via stdio
         server_script = Path(__file__).parent / "main.py"
         transport = PythonStdioTransport(script_path=server_script, python_cmd=sys.executable)
-        print(f"Using stdio transport (spawning server)...")
+        print("Using stdio transport (spawning server)...")
     else:
         # New behavior: connect to already-running server via SSE
         url = f"http://{args.host}:{args.port}/sse"
