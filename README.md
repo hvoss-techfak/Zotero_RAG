@@ -3,7 +3,7 @@
 ZoteroRAG is a local RAG stack for your Zotero library.
 It embeds PDF-backed Zotero items with Ollama, serves search over the embedded sentences, and exposes a small web UI with embedding status and document-level BibTeX.
 
-![alt text](https://github.com/hvoss-techfak/Zotero_RAG/images/zotero_rag.png "ZoteroRAG")
+![alt text](https://github.com/hvoss-techfak/Zotero_RAG/blob/main/images/zotero_rag.png "ZoteroRAG")
 
 ## Important requirement
 
