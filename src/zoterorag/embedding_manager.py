@@ -60,6 +60,32 @@ class EmbeddingManager:
             last_error=self._embedding_progress.last_error,
         )
 
+    def _has_processed_document_record(self, document_key: str) -> bool:
+        if not document_key:
+            return False
+        try:
+            embedded = self.vector_store.get_embedded_documents()
+        except Exception:
+            return False
+        return document_key in embedded
+
+    def _mark_zero_sentence_document_processed(
+        self,
+        doc_key: str,
+        title: str,
+        callback: Optional[Callable[[EmbeddingStatus], None]] = None,
+    ) -> EmbeddingStatus:
+        self.vector_store.update_embedded_document(doc_key, 0)
+        logger.info(
+            "[Embedding] No extractable sentences found for %s (%s); marking as processed.",
+            (title or "")[:60],
+            doc_key,
+        )
+        snapshot = self.mark_document_completed()
+        if callback:
+            callback(snapshot)
+        return snapshot
+
     def get_embedding_status(self) -> EmbeddingStatus:
         with self._progress_lock:
             return self._status_copy_locked()
@@ -352,11 +378,10 @@ class EmbeddingManager:
                 f.set_result(None)
                 return f
 
-            # Fall back to metadata file check (kept for compatibility)
-            embedded = self.vector_store.get_embedded_documents()
-            if embedded.get(document.zotero_key, 0) > 0:
+            # Fall back to metadata file check (kept for compatibility, including zero-sentence PDFs).
+            if self._has_processed_document_record(document.zotero_key):
                 logger.info(
-                    "[Embedding] Skipping already-embedded document %s (%s)",
+                    "[Embedding] Skipping already-processed document %s (%s)",
                     (document.title or "")[:60],
                     document.zotero_key,
                 )
@@ -407,6 +432,13 @@ class EmbeddingManager:
                 temp_path = Path(tmp.name)
 
             sentences = self.process_document(document, str(temp_path))
+            if not sentences:
+                self._mark_zero_sentence_document_processed(
+                    doc_key,
+                    document.title,
+                    callback,
+                )
+                return
 
             sent_embeddings = self.embed_batch([s.text for s in sentences])
             try:
@@ -468,6 +500,13 @@ class EmbeddingManager:
                 callback(EmbeddingStatus(is_running=True, pending_sections=1))
 
             sentences = self.process_document(document, pdf_path)
+            if not sentences:
+                self._mark_zero_sentence_document_processed(
+                    doc_key,
+                    document.title,
+                    callback,
+                )
+                return
 
             sent_embeddings = self.embed_batch([s.text for s in sentences])
             self.vector_store.add_sentences(
@@ -581,11 +620,10 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # Filter to unembedded docs
-    embedded = manager.vector_store.get_embedded_documents()
     pending = [
         (doc, path)
         for doc, path in documents
-        if doc.zotero_key not in embedded or embedded[doc.zotero_key] == 0
+        if not manager._has_processed_document_record(doc.zotero_key)
     ]
 
     print(f"Total PDFs: {len(documents)}, Pending: {len(pending)}")

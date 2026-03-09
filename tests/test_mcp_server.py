@@ -326,6 +326,99 @@ def test_get_pending_documents_skips_store_lookup_for_docs_already_in_metadata(
     assert checked == ["missing"]
 
 
+def test_get_pending_documents_treats_zero_sentence_metadata_as_processed(
+    monkeypatch,
+):
+    config = Config()
+    server = MCPZoteroServer(config)
+
+    docs = [
+        Document(zotero_key="empty", title="Previously Empty"),
+        Document(zotero_key="missing", title="Needs Embedding"),
+    ]
+
+    monkeypatch.setattr(server.zotero_client, "get_documents_with_pdfs", lambda: iter(docs))
+    monkeypatch.setattr(
+        server.embedding_manager.vector_store,
+        "get_embedded_documents",
+        lambda: {"empty": 0},
+    )
+
+    checked = []
+
+    def fake_is_document_embedded(key):
+        checked.append(key)
+        return False
+
+    monkeypatch.setattr(
+        server.embedding_manager.vector_store,
+        "is_document_embedded",
+        fake_is_document_embedded,
+    )
+
+    pending, total_available = server._get_pending_documents()
+
+    assert total_available == 2
+    assert [doc.zotero_key for doc in pending] == ["missing"]
+    assert checked == ["missing"]
+
+
+def test_start_background_embedding_counts_skipped_documents_in_progress(monkeypatch):
+    config = Config()
+    server = MCPZoteroServer(config)
+
+    submitted = []
+
+    docs = [
+        Document(zotero_key="done", title="Done"),
+        Document(zotero_key="todo", title="Todo"),
+        Document(zotero_key="empty", title="Previously Empty"),
+    ]
+
+    class FakeFuture:
+        def result(self):
+            return None
+
+    monkeypatch.setattr(
+        server.zotero_client,
+        "get_documents_with_pdfs",
+        lambda: iter(docs),
+    )
+    monkeypatch.setattr(
+        server.embedding_manager.vector_store,
+        "get_embedded_documents",
+        lambda: {"done": 8, "empty": 0},
+    )
+    monkeypatch.setattr(
+        server.embedding_manager.vector_store,
+        "is_document_embedded",
+        lambda key: False,
+    )
+
+    def fake_embed_document_async_with_client(doc, zotero_client, callback=None):
+        submitted.append(doc.zotero_key)
+        snapshot = server.embedding_manager.mark_document_completed(
+            embedded_sentences=4 if doc.zotero_key == "todo" else 0
+        )
+        if callback:
+            callback(snapshot)
+        return FakeFuture()
+
+    monkeypatch.setattr(
+        server.embedding_manager,
+        "embed_document_async_with_client",
+        fake_embed_document_async_with_client,
+    )
+
+    server._run_background_embedding(trigger="manual")
+
+    final_status = server.embedding_manager.get_embedding_status()
+    assert final_status.is_running is False
+    assert final_status.total_documents == 3
+    assert final_status.processed_documents == 3
+    assert submitted == ["todo"]
+
+
 def test_start_background_embedding_begins_work_before_full_scan_finishes(monkeypatch):
     config = Config()
     server = MCPZoteroServer(config)

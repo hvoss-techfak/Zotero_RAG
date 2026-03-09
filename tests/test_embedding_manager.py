@@ -427,3 +427,49 @@ class TestEmbeddingManager:
 
                 with pytest.raises(ValueError, match="EMBEDDING_DIMENSIONS=1024"):
                     manager.embed_text(["test"])
+
+    def test_embed_document_task_marks_zero_sentence_pdf_as_processed(
+        self, embedding_manager
+    ):
+        doc = Document(zotero_key="empty-doc", title="Empty Doc")
+        callback = MagicMock()
+
+        embedding_manager.start_embedding_job(total_documents=1)
+        embedding_manager.process_document = MagicMock(return_value=[])
+        embedding_manager.embed_batch = MagicMock()
+
+        embedding_manager._embed_document_task(doc, "/tmp/empty.pdf", callback)
+
+        embedding_manager.embed_batch.assert_not_called()
+        embedding_manager.vector_store.update_embedded_document.assert_called_once_with(
+            "empty-doc", 0
+        )
+        status = embedding_manager.get_embedding_status()
+        assert status.processed_documents == 1
+        assert status.embedded_sentences == 0
+        callback.assert_called()
+
+    def test_embed_document_from_zotero_task_marks_zero_sentence_pdf_as_processed(
+        self, embedding_manager
+    ):
+        doc = Document(zotero_key="empty-remote", title="Empty Remote")
+        callback = MagicMock()
+        zotero_client = MagicMock()
+        zotero_client.get_pdf_bytes.return_value = b"%PDF-1.4 fake"
+
+        embedding_manager.start_embedding_job(total_documents=1)
+        embedding_manager.process_document = MagicMock(return_value=[])
+        embedding_manager.embed_batch = MagicMock()
+
+        embedding_manager._embed_document_from_zotero_task(
+            doc, zotero_client, callback
+        )
+
+        embedding_manager.embed_batch.assert_not_called()
+        embedding_manager.vector_store.update_embedded_document.assert_called_once_with(
+            "empty-remote", 0
+        )
+        status = embedding_manager.get_embedding_status()
+        assert status.processed_documents == 1
+        assert status.embedded_sentences == 0
+        callback.assert_called()

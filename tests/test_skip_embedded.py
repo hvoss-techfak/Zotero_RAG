@@ -45,6 +45,29 @@ def test_embed_document_async_with_client_skips_if_already_embedded(
     assert mgr.get_embedding_status().processed_documents == 1
 
 
+def test_embed_document_async_with_client_skips_if_previously_processed_with_zero_sentences(
+    tmp_path: Path,
+) -> None:
+    config = Config()
+    config.VECTOR_STORE_DIR = str(tmp_path)
+
+    mgr = EmbeddingManager(config)
+    mgr.start_embedding_job(total_documents=1)
+
+    # A prior run found the PDF but extracted no sentences.
+    mgr.vector_store.update_embedded_document("D0", 0)
+
+    doc = Document(zotero_key="D0", title="Previously empty")
+    zotero_client = MagicMock()
+
+    fut = mgr.embed_document_async_with_client(doc, zotero_client)
+    fut.result(timeout=2)
+
+    assert zotero_client.get_pdf_bytes.call_count == 0
+    assert zotero_client.get_group_pdf_bytes.call_count == 0
+    assert mgr.get_embedding_status().processed_documents == 1
+
+
 def test_embed_document_async_with_client_runs_if_not_embedded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
