@@ -55,6 +55,7 @@ Key settings:
 - `EMBED_PROGRESS_INTERVAL_SEC` — CLI progress refresh rate
 - `APP_HOST` / `WEBUI_HOST` — bind hosts for server and UI
 - `RERANKER_GPU_MIN_VRAM_GB` — minimum total and currently free VRAM required before the reranker will move to CUDA; defaults to `8.0`
+- `RERANKER_BATCH_SIZE` — how many candidate passages are scored per reranker forward pass; defaults to `8`
 
 Production defaults are intentionally quiet:
 
@@ -62,9 +63,10 @@ Production defaults are intentionally quiet:
 LOG_LEVEL=WARNING
 NOISY_LOG_LEVEL=WARNING
 RERANKER_GPU_MIN_VRAM_GB=8.0
+RERANKER_BATCH_SIZE=8
 ```
 
-The reranker now loads onto CUDA only when a compatible GPU has enough VRAM available, and it releases the model plus cached CUDA memory immediately after reranking finishes.
+The reranker now loads onto CUDA only when a compatible GPU has enough VRAM available, reranks candidates in configurable batches, and releases the model plus cached CUDA memory immediately after reranking finishes.
 
 ## Local setup
 

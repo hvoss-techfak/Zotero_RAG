@@ -285,6 +285,7 @@ class MCPZoteroServer:
         rer = Reranker(
             model_name=self.config.RERANKER_MODEL,
             min_gpu_vram_gb=self.config.RERANKER_GPU_MIN_VRAM_GB,
+            batch_size=self.config.RERANKER_BATCH_SIZE,
         )
         try:
             return rer.rerank(results, query)

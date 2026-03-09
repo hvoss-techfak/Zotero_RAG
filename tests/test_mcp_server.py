@@ -183,16 +183,17 @@ def test_server_shares_vector_store_between_embedding_and_search():
     assert server.embedding_manager.vector_store is server.search_engine.vector_store
 
 
-def test_do_reranking_passes_vram_threshold_and_releases_device(monkeypatch):
+def test_do_reranking_passes_vram_threshold_and_batch_size_and_releases_device(monkeypatch):
     config = Config()
     config.RERANKER_GPU_MIN_VRAM_GB = 12.0
+    config.RERANKER_BATCH_SIZE = 4
     server = MCPZoteroServer(config)
 
     calls = []
 
     class FakeReranker:
-        def __init__(self, model_name=None, min_gpu_vram_gb=8.0):
-            calls.append(("init", min_gpu_vram_gb))
+        def __init__(self, model_name=None, min_gpu_vram_gb=8.0, batch_size=8):
+            calls.append(("init", min_gpu_vram_gb, batch_size))
 
         def rerank(self, results, query):
             calls.append(("rerank", query, len(results)))
@@ -223,19 +224,20 @@ def test_do_reranking_passes_vram_threshold_and_releases_device(monkeypatch):
     reranked = server.do_reranking(results, "query")
 
     assert [item[0] for item in calls] == ["init", "rerank", "release"]
-    assert calls[0] == ("init", 12.0)
+    assert calls[0] == ("init", 12.0, 4)
     assert reranked[0].text == "second"
 
 
 def test_do_reranking_releases_device_when_rerank_fails(monkeypatch):
     config = Config()
+    config.RERANKER_BATCH_SIZE = 6
     server = MCPZoteroServer(config)
 
     calls = []
 
     class FakeReranker:
-        def __init__(self, model_name=None, min_gpu_vram_gb=8.0):
-            calls.append(("init", min_gpu_vram_gb))
+        def __init__(self, model_name=None, min_gpu_vram_gb=8.0, batch_size=8):
+            calls.append(("init", min_gpu_vram_gb, batch_size))
 
         def rerank(self, results, query):
             calls.append(("rerank", query))
@@ -250,6 +252,7 @@ def test_do_reranking_releases_device_when_rerank_fails(monkeypatch):
         server.do_reranking([], "query")
 
     assert [item[0] for item in calls] == ["init", "rerank", "release"]
+    assert calls[0] == ("init", config.RERANKER_GPU_MIN_VRAM_GB, 6)
 
 
 def test_mcp_search_documents_emits_progress_updates(monkeypatch):
@@ -284,7 +287,10 @@ def test_mcp_search_documents_emits_progress_updates(monkeypatch):
 
     assert len(out) == 1
     assert any(update.get("stage") == "reranking" for update in updates)
-    assert any(update.get("message") == "Gathering Metadata 1 of 1" for update in updates)
+    assert any(
+        update.get("message") == "Gathering Final Metadata 1 of 1"
+        for update in updates
+    )
     assert updates[-1]["stage"] == "complete"
     assert updates[-1]["result_count"] == 1
 

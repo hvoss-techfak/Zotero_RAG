@@ -92,6 +92,7 @@ class Config:
         self.RERANKER_GPU_MIN_VRAM_GB: float = max(
             0.0, _get_float("RERANKER_GPU_MIN_VRAM_GB", 8.0)
         )
+        self.RERANKER_BATCH_SIZE: int = max(1, _get_int("RERANKER_BATCH_SIZE", 8))
 
         # Embedding dimensions: 0 means auto-detect from model
         self.EMBEDDING_DIMENSIONS: int = _get_int("EMBEDDING_DIMENSIONS", 2560)
