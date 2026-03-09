@@ -206,14 +206,6 @@ LOG_LEVEL=WARNING
 NOISY_LOG_LEVEL=WARNING
 ```
 
-## Development
-
-Run a focused test subset:
-
-```bash
-uv run pytest tests/test_logging_setup.py tests/test_models.py tests/test_embedding_manager.py tests/test_mcp_server.py tests/test_webui_api.py tests/test_zotero_client.py
-```
-
 ## Project layout
 
 - `main.py` — main runtime entrypoint
