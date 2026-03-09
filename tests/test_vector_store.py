@@ -288,3 +288,49 @@ class TestVectorStore:
         assert reader.get_sentence_texts_by_ids(ids) == {
             "late_doc_sent_0": "Fresh text"
         }
+
+    def test_add_sentences_skips_delete_for_new_document(
+        self, vector_store, monkeypatch: pytest.MonkeyPatch
+    ):
+        vector_store.add_sentences(
+            [self._sentence("doc1_sent_0", "doc1", "alpha", 0)],
+            [[1.0, 0.0, 0.0]],
+            "doc1",
+        )
+
+        delete_calls: list[str] = []
+        original_delete = vector_store.sentences_table.delete
+
+        def tracking_delete(where: str):
+            delete_calls.append(where)
+            return original_delete(where)
+
+        monkeypatch.setattr(vector_store.sentences_table, "delete", tracking_delete)
+
+        vector_store.add_sentences(
+            [
+                self._sentence("doc2_sent_0", "doc2", "beta", 0),
+                self._sentence("doc2_sent_1", "doc2", "gamma", 1),
+            ],
+            [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            "doc2",
+            batch_size=1,
+        )
+
+        assert delete_calls == []
+        assert vector_store.get_sentence_count() == 3
+
+    def test_delete_document_removes_embedded_document_metadata(self, vector_store):
+        vector_store.add_sentences(
+            [self._sentence("doc1_sent_0", "doc1", "alpha", 0)],
+            [[1.0, 0.0, 0.0]],
+            "doc1",
+        )
+        vector_store.update_embedded_document("doc1", 1)
+
+        assert vector_store.get_embedded_documents()["doc1"] == 1
+
+        vector_store.delete_document("doc1")
+
+        assert "doc1" not in vector_store.get_embedded_documents()
+        assert vector_store.get_sentence_count() == 0

@@ -45,6 +45,7 @@ class VectorStore:
         self.persist_directory.mkdir(parents=True, exist_ok=True)
 
         self._embedded_docs_lock = threading.Lock()
+        self._embedded_docs_cache: dict[str, int] | None = None
         self._table_lock = threading.Lock()
 
         self.db_directory = self.persist_directory / "lancedb"
@@ -401,78 +402,84 @@ class VectorStore:
 
     # --- Document metadata tracking ---
 
+    def _load_embedded_documents_locked(self) -> dict[str, int]:
+        if self._embedded_docs_cache is not None:
+            return dict(self._embedded_docs_cache)
+
+        meta_path = self.persist_directory / "embedded_docs.json"
+        docs: dict[str, int] = {}
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r") as f:
+                    content = f.read().strip()
+                    if content:
+                        docs = json.loads(content)
+            except (json.JSONDecodeError, IOError) as e:
+                logger.warning(
+                    "Failed to load embedded_docs.json: %s. Starting fresh.",
+                    e,
+                )
+                backup_path = meta_path.with_suffix(".json.bak")
+                try:
+                    meta_path.rename(backup_path)
+                except OSError:
+                    pass
+
+        self._embedded_docs_cache = {
+            str(key): int(value) for key, value in docs.items()
+        }
+        return dict(self._embedded_docs_cache)
+
+    def _write_embedded_documents_locked(self, docs: dict[str, int]) -> None:
+        meta_path = self.persist_directory / "embedded_docs.json"
+        normalized = {str(key): int(value) for key, value in docs.items()}
+        tmp_path = meta_path.with_suffix(".json.tmp")
+        try:
+            with open(tmp_path, "w") as f:
+                json.dump(normalized, f, sort_keys=True)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, meta_path)
+            self._embedded_docs_cache = dict(normalized)
+        except IOError as e:
+            logger.error("Failed to save embedded_docs.json: %s", e)
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
+
+    def _document_rows_exist_locked(self, document_key: str) -> bool:
+        if not document_key or not self.sentences_table:
+            return False
+        try:
+            rows = self._safe_select(
+                self.sentences_table.search()
+                .where(self._where_eq("document_key", document_key))
+                .limit(1),
+                ["id"],
+            ).to_list()
+            return bool(rows)
+        except Exception:
+            return False
+
     def get_embedded_documents(self) -> dict[str, int]:
         """Return dict mapping document keys to their sentence count."""
-        meta_path = self.persist_directory / "embedded_docs.json"
         with self._embedded_docs_lock:
-            if meta_path.exists():
-                try:
-                    with open(meta_path, "r") as f:
-                        content = f.read().strip()
-                        if content:
-                            return json.loads(content)
-                except (json.JSONDecodeError, IOError) as e:
-                    logger.warning(
-                        "Failed to load embedded_docs.json: %s. Starting fresh.",
-                        e,
-                    )
-                    backup_path = meta_path.with_suffix(".json.bak")
-                    try:
-                        meta_path.rename(backup_path)
-                    except OSError:
-                        pass
-            return {}
+            return self._load_embedded_documents_locked()
 
     def save_embedded_documents(self, docs: dict[str, int], allow_empty: bool = True):
         if not docs and not allow_empty:
             return
 
-        meta_path = self.persist_directory / "embedded_docs.json"
         with self._embedded_docs_lock:
-            tmp_path = meta_path.with_suffix(".json.tmp")
-            try:
-                with open(tmp_path, "w") as f:
-                    json.dump(docs, f, sort_keys=True)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp_path, meta_path)
-            except IOError as e:
-                logger.error("Failed to save embedded_docs.json: %s", e)
-                try:
-                    if tmp_path.exists():
-                        tmp_path.unlink()
-                except OSError:
-                    pass
+            self._write_embedded_documents_locked(docs)
 
     def update_embedded_document(self, document_key: str, sentence_count: int) -> None:
-        meta_path = self.persist_directory / "embedded_docs.json"
-
         with self._embedded_docs_lock:
-            docs: dict[str, int] = {}
-            if meta_path.exists():
-                try:
-                    content = meta_path.read_text().strip()
-                    if content:
-                        docs = json.loads(content)
-                except (json.JSONDecodeError, OSError):
-                    docs = {}
-
+            docs = self._load_embedded_documents_locked()
             docs[document_key] = sentence_count
-
-            tmp_path = meta_path.with_suffix(".json.tmp")
-            try:
-                with open(tmp_path, "w") as f:
-                    json.dump(docs, f, sort_keys=True)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp_path, meta_path)
-            except OSError as e:
-                logger.error("Failed to update embedded_docs.json: %s", e)
-                try:
-                    if tmp_path.exists():
-                        tmp_path.unlink()
-                except OSError:
-                    pass
+            self._write_embedded_documents_locked(docs)
 
     # --- Sentence operations ---
 
@@ -500,6 +507,7 @@ class VectorStore:
                 len(embeddings),
                 n,
             )
+
 
         def _clip_list(v: list, limit: int = 50) -> list:
             return list(v[:limit]) if v else []
@@ -544,15 +552,9 @@ class VectorStore:
                     )
                     self._detected_sentence_dim = embedding_dim
                 else:
-                    ids = [r["id"] for r in rows]
-                    try:
-                        self.sentences_table.delete(self._where_in("id", ids))
-                    except Exception:
-                        logger.debug("Could not delete existing ids before add")
                     self.sentences_table.add(rows)
 
         self._ensure_cosine_index()
-        self._refresh_table_handle()
 
     def get_sentences(self, document_key: str) -> List[Sentence]:
         if not self._prepare_for_read():
@@ -775,6 +777,11 @@ class VectorStore:
             return
         try:
             self.sentences_table.delete(self._where_eq("document_key", document_key))
+            with self._embedded_docs_lock:
+                docs = self._load_embedded_documents_locked()
+                if document_key in docs:
+                    del docs[document_key]
+                    self._write_embedded_documents_locked(docs)
             self._refresh_table_handle()
         except Exception:
             logger.debug("Failed to delete document %s from LanceDB", document_key)
@@ -788,6 +795,15 @@ class VectorStore:
             self.sentences_table = None
             self._detected_sentence_dim = None
             self._index_ready = False
+
+        with self._embedded_docs_lock:
+            self._embedded_docs_cache = {}
+            meta_path = self.persist_directory / "embedded_docs.json"
+            try:
+                if meta_path.exists():
+                    meta_path.unlink()
+            except OSError:
+                logger.debug("Failed to remove embedded_docs.json during clear_all")
 
     def get_sentence_count(self) -> int:
         if not self._prepare_for_read():
