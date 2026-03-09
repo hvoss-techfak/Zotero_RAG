@@ -331,7 +331,7 @@ class MCPZoteroServer:
             except Exception:
                 logger.debug("Search progress callback failed", exc_info=True)
 
-        temp_top_sentences = max(50, top_sentences) if not require_cited_bibtex else max(50,top_sentences*10)
+        temp_top_sentences = max(500, top_sentences)
 
         emit_progress(
             {
