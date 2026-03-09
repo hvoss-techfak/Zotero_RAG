@@ -19,7 +19,7 @@ from semtero.vector_store import VectorStore
 
 
 def main() -> None:
-    store_dir = Path("/tmp/zoterorag_vector_store_smoke")
+    store_dir = Path("/tmp/semtero_vector_store_smoke")
     store_dir.mkdir(parents=True, exist_ok=True)
 
     # Best-effort cleanup of old metadata
