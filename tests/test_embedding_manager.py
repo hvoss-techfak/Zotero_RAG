@@ -11,9 +11,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from zoterorag.config import Config
-from zoterorag.embedding_manager import EmbeddingManager
-from zoterorag.models import Document, EmbeddingStatus
+from semtero.config import Config
+from semtero.embedding_manager import EmbeddingManager
+from semtero.models import Document, EmbeddingStatus
 
 
 class TestEmbeddingManager:
@@ -37,8 +37,8 @@ class TestEmbeddingManager:
     @pytest.fixture
     def embedding_manager(self, mock_config):
         """Create an EmbeddingManager with mocked dependencies."""
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor"):
+        with patch("semtero.embedding_manager.VectorStore"):
+            with patch("semtero.embedding_manager.PDFProcessor"):
                 manager = EmbeddingManager(mock_config)
                 yield manager
 
@@ -46,8 +46,8 @@ class TestEmbeddingManager:
 
     def test_init_sets_config_and_dependencies(self, mock_config):
         """Test that initialization sets config and creates dependencies."""
-        with patch("zoterorag.embedding_manager.VectorStore") as mock_vs:
-            with patch("zoterorag.embedding_manager.PDFProcessor") as mock_pp:
+        with patch("semtero.embedding_manager.VectorStore") as mock_vs:
+            with patch("semtero.embedding_manager.PDFProcessor") as mock_pp:
                 manager = EmbeddingManager(mock_config)
 
                 assert manager.config == mock_config
@@ -57,16 +57,16 @@ class TestEmbeddingManager:
         """Test that initialization accepts optional ZoteroClient."""
         zotero_client = MagicMock()
 
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor"):
+        with patch("semtero.embedding_manager.VectorStore"):
+            with patch("semtero.embedding_manager.PDFProcessor"):
                 manager = EmbeddingManager(mock_config, zotero_client=zotero_client)
 
                 assert manager.zotero_client == zotero_client
 
     def test_init_creates_embedding_status(self, mock_config):
         """Test that initialization creates empty embedding status."""
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor"):
+        with patch("semtero.embedding_manager.VectorStore"):
+            with patch("semtero.embedding_manager.PDFProcessor"):
                 manager = EmbeddingManager(mock_config)
 
                 assert isinstance(manager._embedding_progress, EmbeddingStatus)
@@ -220,8 +220,8 @@ class TestEmbeddingManager:
 
     def test_executor_lazy_initialization(self, mock_config):
         """Test that executor is created lazily."""
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor"):
+        with patch("semtero.embedding_manager.VectorStore"):
+            with patch("semtero.embedding_manager.PDFProcessor"):
                 manager = EmbeddingManager(mock_config)
 
                 assert manager._executor is None
@@ -233,8 +233,8 @@ class TestEmbeddingManager:
 
     def test_executor_creates_with_max_workers(self, mock_config):
         """Test that executor uses max workers from config."""
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor"):
+        with patch("semtero.embedding_manager.VectorStore"):
+            with patch("semtero.embedding_manager.PDFProcessor"):
                 manager = EmbeddingManager(mock_config)
 
                 _ = manager.executor
@@ -258,8 +258,8 @@ class TestEmbeddingManager:
         """Test that options include dimensions when set in config."""
         mock_config.EMBEDDING_DIMENSIONS = 768
 
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor"):
+        with patch("semtero.embedding_manager.VectorStore"):
+            with patch("semtero.embedding_manager.PDFProcessor"):
                 manager = EmbeddingManager(mock_config)
 
                 opts = manager._get_embedding_options()
@@ -271,8 +271,8 @@ class TestEmbeddingManager:
         """Test that options don't include dimensions when not set."""
         mock_config.EMBEDDING_DIMENSIONS = 0
 
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor"):
+        with patch("semtero.embedding_manager.VectorStore"):
+            with patch("semtero.embedding_manager.PDFProcessor"):
                 manager = EmbeddingManager(mock_config)
 
                 opts = manager._get_embedding_options()
@@ -332,8 +332,8 @@ class TestEmbeddingManager:
 
     def test_process_document_calls_pdf_processor(self, mock_config):
         """Test that process_document uses PDFProcessor."""
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor") as mock_pp_class:
+        with patch("semtero.embedding_manager.VectorStore"):
+            with patch("semtero.embedding_manager.PDFProcessor") as mock_pp_class:
                 mock_pp = MagicMock()
                 mock_pp.extract_sentences.return_value = []
                 mock_pp_class.return_value = mock_pp
@@ -352,8 +352,8 @@ class TestEmbeddingManager:
 
     def test_embed_document_async_returns_future(self, mock_config):
         """Test that embed_document_async returns a Future."""
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor"):
+        with patch("semtero.embedding_manager.VectorStore"):
+            with patch("semtero.embedding_manager.PDFProcessor"):
                 manager = EmbeddingManager(mock_config)
 
                 # Force executor creation
@@ -369,8 +369,8 @@ class TestEmbeddingManager:
 
     def test_embed_document_async_with_callback(self, mock_config):
         """Test that embed_document_async returns a Future and accepts a callback."""
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor"):
+        with patch("semtero.embedding_manager.VectorStore"):
+            with patch("semtero.embedding_manager.PDFProcessor"):
                 manager = EmbeddingManager(mock_config)
 
                 manager._executor = ThreadPoolExecutor(max_workers=1)
@@ -400,8 +400,8 @@ class TestEmbeddingManager:
 
     def test_process_document_with_nonexistent_file(self, mock_config):
         """Test that process_document handles nonexistent files gracefully."""
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor") as mock_pp:
+        with patch("semtero.embedding_manager.VectorStore"):
+            with patch("semtero.embedding_manager.PDFProcessor") as mock_pp:
                 mock_pp.return_value.extract_sentences.return_value = []
 
                 manager = EmbeddingManager(mock_config)
@@ -411,7 +411,7 @@ class TestEmbeddingManager:
 
                 assert sentences == []
 
-    @patch("zoterorag.embedding_manager.requests.post")
+    @patch("semtero.embedding_manager.requests.post")
     def test_embed_text_raises_on_dimension_mismatch(self, mock_post, mock_config):
         mock_config.EMBEDDING_DIMENSIONS = 1024
 
@@ -420,8 +420,8 @@ class TestEmbeddingManager:
         response.json.return_value = {"embeddings": [[0.1] * 2560]}
         mock_post.return_value = response
 
-        with patch("zoterorag.embedding_manager.VectorStore"):
-            with patch("zoterorag.embedding_manager.PDFProcessor"):
+        with patch("semtero.embedding_manager.VectorStore"):
+            with patch("semtero.embedding_manager.PDFProcessor"):
                 manager = EmbeddingManager(mock_config)
                 manager.vector_store.get_detected_dimension.return_value = None
 

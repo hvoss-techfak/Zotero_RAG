@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from zoterorag.logging_setup import setup_logging, _NOISY_LOGGERS, parse_log_level
+from semtero.logging_setup import setup_logging, _NOISY_LOGGERS, parse_log_level
 
 
 class TestLoggingSetup:

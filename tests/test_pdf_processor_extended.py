@@ -9,8 +9,8 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
-from zoterorag.pdf_processor import PDFProcessor
-from zoterorag.models import Sentence
+from semtero.pdf_processor import PDFProcessor
+from semtero.models import Sentence
 
 
 class TestExtractMarkdown:
@@ -25,7 +25,7 @@ class TestExtractMarkdown:
         result = processor.extract_markdown("/nonexistent/file.pdf")
         assert result == ""
 
-    @patch("zoterorag.pdf_processor.pymupdf4llm.to_markdown")
+    @patch("semtero.pdf_processor.pymupdf4llm.to_markdown")
     def test_extract_markdown_with_layout(self, mock_to_markdown, processor):
         """Test extraction with layout preservation."""
         mock_to_markdown.return_value = "Mocked markdown content"
@@ -36,7 +36,7 @@ class TestExtractMarkdown:
         assert result == "Mocked markdown content"
         mock_to_markdown.assert_called_once()
 
-    @patch("zoterorag.pdf_processor.pymupdf4llm.to_markdown")
+    @patch("semtero.pdf_processor.pymupdf4llm.to_markdown")
     def test_extract_markdown_without_layout(self, mock_to_markdown, processor):
         """Test extraction without layout preservation."""
         processor_no_layout = PDFProcessor(use_layout=False)
@@ -48,7 +48,7 @@ class TestExtractMarkdown:
         call_args = mock_to_markdown.call_args[0][0]
         assert "/test.pdf" in call_args
 
-    @patch("zoterorag.pdf_processor.pymupdf4llm.to_markdown")
+    @patch("semtero.pdf_processor.pymupdf4llm.to_markdown")
     def test_extract_markdown_returns_list(self, mock_to_markdown, processor):
         """Test handling of list return from pymupdf4llm."""
         mock_to_markdown.return_value = [
@@ -61,7 +61,7 @@ class TestExtractMarkdown:
 
         assert result == "Page 1 content\nPage 2 content"
 
-    @patch("zoterorag.pdf_processor.pymupdf4llm.to_markdown")
+    @patch("semtero.pdf_processor.pymupdf4llm.to_markdown")
     def test_extract_markdown_exception_handling(self, mock_to_markdown, processor):
         """Test exception handling during extraction."""
         mock_to_markdown.side_effect = Exception("PDF error")
@@ -84,7 +84,7 @@ class TestExtractQuarterSections:
         result = processor.extract_sentences("/nonexistent/file.pdf")
         assert result == []
 
-    @patch("zoterorag.pdf_processor.pymupdf4llm.to_markdown")
+    @patch("semtero.pdf_processor.pymupdf4llm.to_markdown")
     def test_extract_quarter_sections_single_page(self, mock_to_markdown, processor):
         """Test single page PDF handling."""
         mock_to_markdown.return_value = "Single page text content."
@@ -96,7 +96,7 @@ class TestExtractQuarterSections:
         assert isinstance(result[0], Sentence)
         assert result[0].document_id == "test"
 
-    @patch("zoterorag.pdf_processor.pymupdf4llm.to_markdown")
+    @patch("semtero.pdf_processor.pymupdf4llm.to_markdown")
     def test_extract_quarter_sections_multiple_pages(self, mock_to_markdown, processor):
         """Test multiple page PDF handling."""
         mock_to_markdown.return_value = [
@@ -111,7 +111,7 @@ class TestExtractQuarterSections:
         # should create sections
         assert len(result) > 0
 
-    @patch("zoterorag.pdf_processor.pymupdf4llm.to_markdown")
+    @patch("semtero.pdf_processor.pymupdf4llm.to_markdown")
     def test_extract_quarter_sections_empty_pages(self, mock_to_markdown, processor):
         """Test handling of empty page content."""
         mock_to_markdown.return_value = [
@@ -125,7 +125,7 @@ class TestExtractQuarterSections:
         # Empty pages should produce no sections
         assert len(result) == 0
 
-    @patch("zoterorag.pdf_processor.pymupdf4llm.to_markdown")
+    @patch("semtero.pdf_processor.pymupdf4llm.to_markdown")
     def test_extract_quarter_sections_exception(self, mock_to_markdown, processor):
         """Test exception handling."""
         mock_to_markdown.side_effect = Exception("PDF error")
@@ -227,11 +227,11 @@ class TestWhitespaceNormalization:
 class TestProcessDocumentFunction:
     """Test suite for process_document function."""
 
-    @patch("zoterorag.pdf_processor.PDFProcessor")
+    @patch("semtero.pdf_processor.PDFProcessor")
     def test_process_document_uses_default_processor(self, mock_processor_class):
         """Test that process_document creates PDFProcessor with defaults."""
-        from zoterorag.pdf_processor import process_document
-        from zoterorag.models import Document
+        from semtero.pdf_processor import process_document
+        from semtero.models import Document
 
         # Setup mock
         mock_processor = Mock()

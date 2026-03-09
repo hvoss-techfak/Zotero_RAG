@@ -11,9 +11,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from zoterorag.config import Config
-from zoterorag.embedding_manager import EmbeddingManager
-from zoterorag.models import Document
+from semtero.config import Config
+from semtero.embedding_manager import EmbeddingManager
+from semtero.models import Document
 
 
 def test_embed_document_async_with_client_skips_if_already_embedded(

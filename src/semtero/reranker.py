@@ -6,7 +6,7 @@ from typing import List
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-from zoterorag.models import SearchResult
+from semtero.models import SearchResult
 
 logger = logging.getLogger(__name__)
 

@@ -9,8 +9,8 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import requests
-from zoterorag.zotero_client import ZoteroClient
-from zoterorag.models import Document
+from semtero.zotero_client import ZoteroClient
+from semtero.models import Document
 
 
 class _ClosableResponse:
@@ -51,7 +51,7 @@ class TestZoteroClientInitialization:
 
         assert not client.api_url.endswith("/")
 
-    @patch("zoterorag.zotero_client.config")
+    @patch("semtero.zotero_client.config")
     def test_uses_config_for_defaults(self, mock_config):
         """Test fallback to config for API URL and key."""
         mock_config.ZOTERO_API_URL = "http://config:23119"

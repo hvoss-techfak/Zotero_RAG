@@ -8,9 +8,9 @@ import pytest
 # Add src to path like main.py does
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from zoterorag.config import Config
-from zoterorag.mcp_server import MCPZoteroServer
-from zoterorag.models import SearchResult, EmbeddingStatus, Document
+from semtero.config import Config
+from semtero.mcp_server import MCPZoteroServer
+from semtero.models import SearchResult, EmbeddingStatus, Document
 
 
 def test_mcp_search_documents_passes_citation_return_mode_and_filters_require_cited_bibtex(
@@ -201,7 +201,7 @@ def test_do_reranking_passes_vram_threshold_and_releases_device(monkeypatch):
         def release_device(self):
             calls.append(("release",))
 
-    monkeypatch.setattr("zoterorag.mcp_server.Reranker", FakeReranker)
+    monkeypatch.setattr("semtero.mcp_server.Reranker", FakeReranker)
 
     results = [
         SearchResult(
@@ -244,7 +244,7 @@ def test_do_reranking_releases_device_when_rerank_fails(monkeypatch):
         def release_device(self):
             calls.append(("release",))
 
-    monkeypatch.setattr("zoterorag.mcp_server.Reranker", FakeReranker)
+    monkeypatch.setattr("semtero.mcp_server.Reranker", FakeReranker)
 
     with pytest.raises(RuntimeError, match="boom"):
         server.do_reranking([], "query")

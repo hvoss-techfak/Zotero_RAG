@@ -9,15 +9,15 @@ import pytest
 # Add src to path like main.py does
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from zoterorag.search_engine import SearchEngine
-from zoterorag.config import Config
-from zoterorag.models import SearchResult
+from semtero.search_engine import SearchEngine
+from semtero.config import Config
+from semtero.models import SearchResult
 
 
 class TestSearchEngineInitialization:
     """Test suite for SearchEngine initialization."""
 
-    @patch("zoterorag.search_engine.VectorStore")
+    @patch("semtero.search_engine.VectorStore")
     def test_default_initialization(self, mock_vector_store):
         """Test default initialization."""
         config = Config()
@@ -31,8 +31,8 @@ class TestSearchEngineInitialization:
 class TestQueryEmbedding:
     """Test suite for query embedding generation."""
 
-    @patch("zoterorag.search_engine.Client")
-    @patch("zoterorag.search_engine.VectorStore")
+    @patch("semtero.search_engine.Client")
+    @patch("semtero.search_engine.VectorStore")
     def test_get_query_embedding(self, mock_vector_store, mock_client_cls):
         """Test query embedding generation."""
         mock_client = MagicMock()
@@ -49,8 +49,8 @@ class TestQueryEmbedding:
         assert result == [0.1, 0.2, 0.3]
         mock_client.embeddings.assert_called_once()
 
-    @patch("zoterorag.search_engine.Client")
-    @patch("zoterorag.search_engine.VectorStore")
+    @patch("semtero.search_engine.Client")
+    @patch("semtero.search_engine.VectorStore")
     def test_get_query_embedding_raises_on_dimension_mismatch(
         self, mock_vector_store, mock_client_cls
     ):
@@ -70,8 +70,8 @@ class TestQueryEmbedding:
 class TestSearchBestSentences:
     """Search should use ANN ids+distances and only fetch top-k texts."""
 
-    @patch("zoterorag.search_engine.Client")
-    @patch("zoterorag.search_engine.VectorStore")
+    @patch("semtero.search_engine.Client")
+    @patch("semtero.search_engine.VectorStore")
     def test_search_best_sentences_uses_ids_and_fetches_texts(
         self, mock_vector_store_cls, mock_client_cls
     ):
@@ -100,8 +100,8 @@ class TestSearchBestSentences:
         mock_vs.get_sentence_texts_by_ids.assert_called_once_with(["s1", "s2"])
         assert all(isinstance(r, SearchResult) for r in results)
 
-    @patch("zoterorag.search_engine.Client")
-    @patch("zoterorag.search_engine.VectorStore")
+    @patch("semtero.search_engine.Client")
+    @patch("semtero.search_engine.VectorStore")
     def test_search_best_sentences_citation_return_modes(
         self, mock_vector_store_cls, mock_client_cls
     ):
@@ -151,8 +151,8 @@ class TestSearchBestSentences:
         assert "hello [5]" in r3[0].text
         assert "@article" in r3[0].text
 
-    @patch("zoterorag.search_engine.Client")
-    @patch("zoterorag.search_engine.VectorStore")
+    @patch("semtero.search_engine.Client")
+    @patch("semtero.search_engine.VectorStore")
     def test_search_best_sentences_emits_progress_updates(
         self, mock_vector_store_cls, mock_client_cls
     ):
@@ -217,13 +217,13 @@ class TestDimensionMismatch:
         config = Config()
         config.EMBEDDING_DIMENSIONS = 1024
 
-        with patch("zoterorag.search_engine.VectorStore") as mock_vs_cls:
+        with patch("semtero.search_engine.VectorStore") as mock_vs_cls:
             mock_vs = MagicMock()
             mock_vs.has_dimension_mismatch.return_value = True
             mock_vs.get_detected_dimension.return_value = 768
             mock_vs_cls.return_value = mock_vs
 
-            with patch("zoterorag.search_engine.logger") as mock_logger:
+            with patch("semtero.search_engine.logger") as mock_logger:
                 _ = SearchEngine(config)
                 assert mock_logger.warning.called
 

@@ -12,8 +12,8 @@ import pytest
 # Add src to path like main.py does
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from zoterorag.models import Sentence
-from zoterorag.vector_store import VectorStore
+from semtero.models import Sentence
+from semtero.vector_store import VectorStore
 
 
 class TestVectorStore:

@@ -16,10 +16,10 @@ import ollama
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from zoterorag.config import Config
-from zoterorag.models import Document, Sentence, EmbeddingStatus
-from zoterorag.pdf_processor import PDFProcessor
-from zoterorag.vector_store import VectorStore
+from semtero.config import Config
+from semtero.models import Document, Sentence, EmbeddingStatus
+from semtero.pdf_processor import PDFProcessor
+from semtero.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -584,7 +584,7 @@ class EmbeddingManager:
 
 
 if __name__ == "__main__":
-    from zoterorag.logging_setup import setup_logging
+    from semtero.logging_setup import setup_logging
 
     setup_logging(level=os.getenv("LOG_LEVEL", "WARNING"))
 

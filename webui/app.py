@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from flask import Flask, jsonify, render_template, request
 
 # Import the MCP server components - we need direct access to search
-from zoterorag.logging_setup import setup_logging
-from zoterorag.mcp_server import get_server
+from semtero.logging_setup import setup_logging
+from semtero.mcp_server import get_server
 
 
 logger = logging.getLogger(__name__)

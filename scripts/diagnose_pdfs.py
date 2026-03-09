@@ -11,9 +11,9 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from pathlib import Path
-from zoterorag.config import Config
-from zoterorag.zotero_client import ZoteroClient
-from zoterorag.vector_store import VectorStore
+from semtero.config import Config
+from semtero.zotero_client import ZoteroClient
+from semtero.vector_store import VectorStore
 
 def main():
     Config.ensure_dirs()

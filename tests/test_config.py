@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from zoterorag.config import Config
+from semtero.config import Config
 
 
 class TestConfigFromEnvironment:
@@ -62,8 +62,8 @@ class TestConfigFromEnvironment:
 class TestConfigMethods:
     """Test Config class methods."""
 
-    @patch("zoterorag.config.Config.VECTOR_STORE_DIR", Path("/tmp/test_vector"))
-    @patch("zoterorag.config.Config.PDF_CACHE_PATH", Path("/tmp/test_pdfs"))
+    @patch("semtero.config.Config.VECTOR_STORE_DIR", Path("/tmp/test_vector"))
+    @patch("semtero.config.Config.PDF_CACHE_PATH", Path("/tmp/test_pdfs"))
     def test_ensure_dirs(self):
         """Test directory creation."""
         import tempfile

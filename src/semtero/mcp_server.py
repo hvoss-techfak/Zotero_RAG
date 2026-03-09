@@ -6,14 +6,14 @@ from typing import Optional, Callable, Any
 
 from fastmcp import FastMCP
 
-from zoterorag.config import Config
-from zoterorag.doi_client import DoiClient, normalize_doi
-from zoterorag.embedding_manager import EmbeddingManager
-from zoterorag.search_engine import SearchEngine
-from zoterorag.zotero_client import ZoteroClient
-from zoterorag.models import CitationReturnMode, SearchResult
-from zoterorag.reranker import Reranker
-from zoterorag.vector_store import VectorStore
+from semtero.config import Config
+from semtero.doi_client import DoiClient, normalize_doi
+from semtero.embedding_manager import EmbeddingManager
+from semtero.search_engine import SearchEngine
+from semtero.zotero_client import ZoteroClient
+from semtero.models import CitationReturnMode, SearchResult
+from semtero.reranker import Reranker
+from semtero.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -832,7 +832,7 @@ async def import_item_by_doi(doi: str, collection_key: Optional[str] = None) -> 
 
 def main() -> None:
     """Run the FastMCP server (stdio)."""
-    from zoterorag.logging_setup import setup_logging
+    from semtero.logging_setup import setup_logging
 
     setup_logging()
 

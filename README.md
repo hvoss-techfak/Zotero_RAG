@@ -1,13 +1,14 @@
-# ZoteroRAG
+# SemTero
 
-ZoteroRAG is a local RAG stack for your Zotero library.
+
+SemTero is a local RAG stack for your Zotero library.
 It embeds PDF-backed Zotero items with Ollama, enables semantic search over the embedded sentences, and exposes a small web UI and MCP server for you.
 
-![alt text](https://github.com/hvoss-techfak/Zotero_RAG/blob/main/images/zotero_rag.png "ZoteroRAG")
+![alt text](https://github.com/hvoss-techfak/Zotero_RAG/blob/main/images/zotero_rag.png "SemTero")
 
 ## What you get
 
-- MCP server for Zotero-backed RAG search
+- MCP server for Zotero-backed Semantic search
 - Web UI for manual searching and embedding status
 - Background embedding with CLI and web progress bars
 - Automatic re-scan for newly added documents after a configurable cooldown
@@ -124,7 +125,7 @@ On Linux, this works on current Docker versions. If it does not work in your set
 ### Build the image
 
 ```bash
-docker build -t zoterorag .
+docker build -t semtero .
 ```
 
 ### Run with Docker Compose

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ZoteroRAG - main application entrypoint."""
+"""SemTero - main application entrypoint."""
 
 import argparse
 import asyncio
@@ -15,11 +15,11 @@ from unittest.mock import patch
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-from zoterorag.config import Config
-from zoterorag.embedding_manager import EmbeddingManager
-from zoterorag.logging_setup import setup_logging
-from zoterorag.mcp_server import MCPZoteroServer, mcp, set_server_instance
-from zoterorag.zotero_client import ZoteroClient
+from semtero.config import Config
+from semtero.embedding_manager import EmbeddingManager
+from semtero.logging_setup import setup_logging
+from semtero.mcp_server import MCPZoteroServer, mcp, set_server_instance
+from semtero.zotero_client import ZoteroClient
 
 try:
     from webui.app import run as run_webui
@@ -34,8 +34,8 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-class ZoteroRAGApplication:
-    """Main application managing all ZoteroRAG services."""
+class SemTeroApplication:
+    """Main application managing all SemTero services."""
 
     def __init__(self) -> None:
         self.config = Config()
@@ -49,7 +49,7 @@ class ZoteroRAGApplication:
 
     def initialize(self) -> bool:
         """Initialize all services."""
-        logger.info("Initializing ZoteroRAG...")
+        logger.info("Initializing SemTero...")
         Config.ensure_dirs()
 
         try:
@@ -282,7 +282,7 @@ class ZoteroRAGApplication:
     def test_ollama_connection(self) -> bool | str:
         """Test Ollama connectivity and model availability."""
         try:
-            with patch("zoterorag.vector_store.VectorStore"):
+            with patch("semtero.vector_store.VectorStore"):
                 manager = EmbeddingManager(self.config)
             embedding = manager.embed_text(["test"])
             return bool(embedding and len(embedding) > 0)
@@ -308,7 +308,7 @@ class ZoteroRAGApplication:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="ZoteroRAG - MCP Server for Zotero with RAG"
+        description="SemTero - MCP Server for Zotero with RAG"
     )
     parser.add_argument(
         "--daemon", action="store_true", help="Run in daemon mode with periodic sync"
@@ -354,7 +354,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    app = ZoteroRAGApplication()
+    app = SemTeroApplication()
     app.config.APP_HOST = args.host
     app.config.WEBUI_HOST = args.webui_host
 

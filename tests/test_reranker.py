@@ -3,8 +3,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from zoterorag import reranker as reranker_module
-from zoterorag.reranker import Reranker
+from semtero import reranker as reranker_module
+from semtero.reranker import Reranker
 
 
 GB = 1024**3

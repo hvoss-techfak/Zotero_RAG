@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from zoterorag.vector_store import VectorStore
+from semtero.vector_store import VectorStore
 
 
 def main() -> None:

@@ -4,7 +4,7 @@ import os
 # Add src to path like main.py does
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from zoterorag.citation_extractor import (
+from semtero.citation_extractor import (
     extract_citation_numbers_from_sentence,
     reference_text_to_bibtex,
 )
