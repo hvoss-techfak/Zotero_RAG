@@ -94,7 +94,26 @@ class VectorStore:
     def _refresh_table_handle(self) -> None:
         """Reopen table to observe the latest committed version from disk."""
         with self._table_lock:
-            self.sentences_table = self._open_table_if_exists()
+            previous_table = self.sentences_table
+            refreshed_table = self._open_table_if_exists()
+            self.sentences_table = refreshed_table
+            if refreshed_table is None:
+                self._detected_sentence_dim = None
+                self._index_ready = False
+                return
+
+            if previous_table is not refreshed_table:
+                self._index_ready = False
+
+            schema_dim = self._vector_dimension_from_schema(refreshed_table.schema)
+            self._detected_sentence_dim = schema_dim
+            if self._detected_sentence_dim is None:
+                self._detect_dimensions()
+
+    def _prepare_for_read(self) -> bool:
+        """Refresh the table handle before read operations so background writes are visible."""
+        self._refresh_table_handle()
+        return self.sentences_table is not None
 
     def _ensure_cosine_index(self) -> None:
         if not self.sentences_table:
@@ -239,6 +258,8 @@ class VectorStore:
 
     def get_detected_dimension(self) -> int | None:
         """Return detected sentence embedding dimension, if any."""
+        if self._detected_sentence_dim is None:
+            self._refresh_table_handle()
         return self._detected_sentence_dim
 
     def has_dimension_mismatch(self, expected_dim: int) -> bool:
@@ -534,7 +555,7 @@ class VectorStore:
         self._refresh_table_handle()
 
     def get_sentences(self, document_key: str) -> List[Sentence]:
-        if not self.sentences_table:
+        if not self._prepare_for_read():
             return []
 
         try:
@@ -587,7 +608,7 @@ class VectorStore:
         return out
 
     def get_sentence_metadatas_by_ids(self, ids: List[str]) -> dict[str, dict]:
-        if not ids or not self.sentences_table:
+        if not ids or not self._prepare_for_read():
             return {}
 
         out: dict[str, dict] = {}
@@ -644,7 +665,7 @@ class VectorStore:
         top_k: int = 10,
         include_documents: bool = False,
     ) -> tuple[List[str], List[float], List[dict]]:
-        if not self.sentences_table:
+        if not self._prepare_for_read():
             return [], [], []
 
         def _execute_query() -> list[dict]:
@@ -711,7 +732,7 @@ class VectorStore:
         return ids, scores, metadatas
 
     def get_sentence_texts_by_ids(self, ids: List[str]) -> dict[str, str]:
-        if not ids or not self.sentences_table:
+        if not ids or not self._prepare_for_read():
             return {}
 
         out: dict[str, str] = {}
@@ -733,7 +754,7 @@ class VectorStore:
         return out
 
     def is_document_embedded(self, document_key: str) -> bool:
-        if not document_key or not self.sentences_table:
+        if not document_key or not self._prepare_for_read():
             return False
 
         try:
@@ -769,7 +790,7 @@ class VectorStore:
             self._index_ready = False
 
     def get_sentence_count(self) -> int:
-        if not self.sentences_table:
+        if not self._prepare_for_read():
             return 0
         try:
             return int(self.sentences_table.count_rows())

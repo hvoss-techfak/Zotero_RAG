@@ -263,3 +263,28 @@ class TestVectorStore:
         assert out[1].page_section == 2
         assert out[1].referenced_texts == ["Ref text"]
         assert out[1].referenced_bibtex == ["@article{new}"]
+
+    def test_reader_refreshes_after_external_write_without_restart(self, temp_dir):
+        reader = VectorStore(persist_directory=str(temp_dir))
+        writer = VectorStore(persist_directory=str(temp_dir))
+
+        writer.add_sentences(
+            [self._sentence("late_doc_sent_0", "late_doc", "Fresh text", 0)],
+            [[1.0, 0.0, 0.0]],
+            "late_doc",
+        )
+
+        assert reader.get_sentence_count() == 1
+        assert reader.is_document_embedded("late_doc") is True
+
+        ids, scores, metas = reader.search_sentence_ids(
+            query_embedding=[1.0, 0.0, 0.0],
+            document_key="late_doc",
+            top_k=1,
+        )
+        assert ids == ["late_doc_sent_0"]
+        assert len(scores) == 1
+        assert metas[0]["document_key"] == "late_doc"
+        assert reader.get_sentence_texts_by_ids(ids) == {
+            "late_doc_sent_0": "Fresh text"
+        }

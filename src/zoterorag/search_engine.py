@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 class SearchEngine:
     """Sentence-focused RAG search."""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, vector_store: VectorStore | None = None):
         self.config = config
-        self.vector_store = VectorStore(str(config.VECTOR_STORE_DIR))
+        self.vector_store = vector_store or VectorStore(str(config.VECTOR_STORE_DIR))
 
         if (
             self.config.EMBEDDING_DIMENSIONS > 0

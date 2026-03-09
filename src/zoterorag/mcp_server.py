@@ -13,6 +13,7 @@ from zoterorag.search_engine import SearchEngine
 from zoterorag.zotero_client import ZoteroClient
 from zoterorag.models import CitationReturnMode, SearchResult
 from zoterorag.reranker import Reranker
+from zoterorag.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +28,15 @@ class MCPZoteroServer:
             base_url=config.DOI_BIBTEX_BASE_URL,
             timeout_seconds=float(config.DOI_BIBTEX_TIMEOUT_SECONDS),
         )
-        self.embedding_manager = EmbeddingManager(config)
-        self.search_engine = SearchEngine(config)
+        shared_vector_store = VectorStore(str(config.VECTOR_STORE_DIR))
+        self.embedding_manager = EmbeddingManager(
+            config,
+            vector_store=shared_vector_store,
+        )
+        self.search_engine = SearchEngine(
+            config,
+            vector_store=shared_vector_store,
+        )
         # Cache for document metadata to avoid repeated API calls
         self._metadata_cache: dict[str, dict] = {}
         self._auto_embed_done = False

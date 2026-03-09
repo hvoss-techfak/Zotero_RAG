@@ -170,3 +170,10 @@ def test_shutdown_closes_http_clients(monkeypatch):
     server.shutdown()
 
     assert calls == ["embedding", "zotero", "doi"]
+
+
+def test_server_shares_vector_store_between_embedding_and_search():
+    config = Config()
+    server = MCPZoteroServer(config)
+
+    assert server.embedding_manager.vector_store is server.search_engine.vector_store

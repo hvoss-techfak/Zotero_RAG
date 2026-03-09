@@ -140,8 +140,10 @@ class Config:
     def ensure_dirs(cls) -> None:
         """Ensure required directories exist."""
         cfg = cls()
-        cfg.VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
-        cfg.PDF_CACHE_PATH.mkdir(parents=True, exist_ok=True)
+        cls.VECTOR_STORE_DIR = cfg.VECTOR_STORE_DIR
+        cls.PDF_CACHE_PATH = cfg.PDF_CACHE_PATH
+        cls.VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
+        cls.PDF_CACHE_PATH.mkdir(parents=True, exist_ok=True)
 
     def get_zotero_headers(self) -> dict:
         """Get headers for Zotero API requests."""

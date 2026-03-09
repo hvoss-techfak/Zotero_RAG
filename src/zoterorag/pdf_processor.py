@@ -10,7 +10,10 @@ from typing import List
 import pymupdf4llm
 
 from .models import Document, Sentence
-from .citation_extractor import extract_citation_metadata
+from .citation_extractor import (
+    extract_citation_metadata,
+    extract_page_text_from_pymupdf4llm,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +23,7 @@ class PDFProcessor:
 
     # Regex patterns for markdown headings
     HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+    SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+(?=[\"\[(]?[A-Z0-9])")
 
     def __init__(
         self,
@@ -150,6 +154,42 @@ class PDFProcessor:
         lines = [line.rstrip() for line in text.split("\n")]
         return "\n".join(lines)
 
+    def _sentences_from_plain_text(
+        self,
+        text: str,
+        *,
+        doc_id: str,
+        page: int = 1,
+        start_index: int = 0,
+    ) -> List[Sentence]:
+        normalized = self._normalize_ws(text)
+        if not normalized:
+            return []
+
+        out_sentences: list[Sentence] = []
+        for raw_sentence in self.SENTENCE_SPLIT_PATTERN.split(normalized):
+            sentence = self._normalize_ws(raw_sentence)
+            if not sentence or len(sentence.split()) <= 3:
+                continue
+
+            sentence_index = start_index + len(out_sentences)
+            out_sentences.append(
+                Sentence(
+                    id=f"{doc_id}_sent_{sentence_index}",
+                    document_id=doc_id,
+                    page=page,
+                    page_section=0,
+                    sentence_index=sentence_index,
+                    text=sentence,
+                    is_embedded=False,
+                    citation_numbers=[],
+                    referenced_texts=[],
+                    referenced_bibtex=[],
+                )
+            )
+
+        return out_sentences
+
     def extract_quarter_sections(
         self, pdf_path: str | Path, document_id: str | None = None
     ) -> List[Sentence]:
@@ -193,7 +233,7 @@ class PDFProcessor:
             extracted = extract_citation_metadata(path)
         except Exception as e:
             logger.debug("Citation extraction failed for %s: %s", path, e)
-            return []
+            extracted = {}
 
         out_sentences = []
         for i, (sentence, metadata) in enumerate(extracted.items()):
@@ -211,7 +251,29 @@ class PDFProcessor:
             )
             out_sentences.append(out)
 
-        return out_sentences
+        if out_sentences:
+            return out_sentences
+
+        fallback_pages = extract_page_text_from_pymupdf4llm(path)
+        if fallback_pages:
+            sentence_index = 0
+            for page_chunk in fallback_pages:
+                plain_text = self.sanitize_markdown(page_chunk.get("text", ""))
+                page_number = int(page_chunk.get("page", 1) or 1)
+                page_sentences = self._sentences_from_plain_text(
+                    plain_text,
+                    doc_id=doc_id,
+                    page=page_number,
+                    start_index=sentence_index,
+                )
+                out_sentences.extend(page_sentences)
+                sentence_index += len(page_sentences)
+            if out_sentences:
+                return out_sentences
+
+        markdown = self.extract_markdown(str(path))
+        plain_text = self.sanitize_markdown(markdown)
+        return self._sentences_from_plain_text(plain_text, doc_id=doc_id)
 
     def _normalize_ws(self, s: str) -> str:
         return re.sub(r"\s+", " ", (s or "")).strip()

@@ -27,9 +27,14 @@ logger = logging.getLogger(__name__)
 class EmbeddingManager:
     """Manages sentence embedding with background processing."""
 
-    def __init__(self, config: Config, zotero_client=None):
+    def __init__(
+        self,
+        config: Config,
+        zotero_client=None,
+        vector_store: VectorStore | None = None,
+    ):
         self.config = config
-        self.vector_store = VectorStore(str(config.VECTOR_STORE_DIR))
+        self.vector_store = vector_store or VectorStore(str(config.VECTOR_STORE_DIR))
         self.pdf_processor = PDFProcessor()
         self._executor: Optional[ThreadPoolExecutor] = None
         self.zotero_client = zotero_client
