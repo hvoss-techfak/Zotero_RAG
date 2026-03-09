@@ -3,6 +3,8 @@
 ZoteroRAG is a local RAG stack for your Zotero library.
 It embeds PDF-backed Zotero items with Ollama, serves search over the embedded sentences, and exposes a small web UI with embedding status and document-level BibTeX.
 
+![alt text](https://github.com/hvoss-techfak/Zotero_RAG/images/zotero_rag.png "ZoteroRAG")
+
 ## Important requirement
 
 **Zotero must be running on the host for this project to work correctly.**
@@ -14,6 +16,7 @@ Enable "Allow other appplications on this computer to communicate with Zotero" i
 ## What you get
 
 - MCP server for Zotero-backed RAG search
+- Web UI for manual searching and embedding status
 - Background embedding with CLI and web progress bars
 - Automatic re-scan for newly added documents after a configurable cooldown
 - Web UI button to embed newly discovered documents immediately
@@ -219,3 +222,7 @@ uv run pytest tests/test_logging_setup.py tests/test_models.py tests/test_embedd
 - `tests/` — automated tests
 - `Dockerfile` / `docker-compose.yml` — containerized execution
 
+## License
+
+Zotero-Rag © 2026 by Hendric Voss is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
+The software is provided as-is and comes with no warranty or guarantee of support.
