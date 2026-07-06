@@ -26,7 +26,7 @@ class Reranker:
         self.model = None
         self.token_false_id = None
         self.token_true_id = None
-        self.max_length = 8192
+        self.max_length = 1024
         self.prefix_tokens = []
         self.suffix_tokens = []
 
@@ -69,7 +69,7 @@ class Reranker:
 
         return torch.device(f"cuda:{selected_device_index}")
 
-    def _ensure_loaded(self) -> None:
+    def ensure_loaded(self) -> None:
         if self.tokenizer is None:
             tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name, padding_side="left"
@@ -115,7 +115,7 @@ class Reranker:
         for i, ele in enumerate(inputs["input_ids"]):
             inputs["input_ids"][i] = self.prefix_tokens + ele + self.suffix_tokens
         inputs = self.tokenizer.pad(
-            inputs, padding=True, return_tensors="pt", max_length=self.max_length
+            inputs, padding=True, return_tensors="pt"
         )
         for key in inputs:
             inputs[key] = inputs[key].to(self.device)
@@ -135,57 +135,37 @@ class Reranker:
         if hasattr(torch.cuda, "ipc_collect"):
             torch.cuda.ipc_collect()
 
-    def compute_logits(self, inputs, **kwargs):
-        outputs = None
-        logits = None
-        true_vector = None
-        false_vector = None
-        batch_scores = None
-        score_tensor = None
-        try:
-            with torch.inference_mode():
-                outputs = self.model(**inputs)
-                logits = outputs.logits[:, -1, :]
-            true_vector = logits[:, self.token_true_id]
-            false_vector = logits[:, self.token_false_id]
-            batch_scores = torch.stack([false_vector, true_vector], dim=1)
-            score_tensor = torch.nn.functional.log_softmax(batch_scores, dim=1)
-            return score_tensor[:, 1].exp().detach().cpu().tolist()
-        finally:
-            del outputs
-            del logits
-            del true_vector
-            del false_vector
-            del batch_scores
-            del score_tensor
+    def compute_logits(self, inputs):
+        with torch.inference_mode():
+            if self.device.type == "cuda":
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    logits = self.model(**inputs).logits[:, -1, :]
+            else:
+                logits = self.model(**inputs).logits[:, -1, :]
+        yes_logits = logits[:, self.token_true_id]
+        no_logits = logits[:, self.token_false_id]
+        batch_scores = torch.stack([no_logits, yes_logits], dim=1)
+        return torch.nn.functional.log_softmax(batch_scores, dim=1)[:, 1].exp().detach().cpu().tolist()
 
     def rerank(self, results: List[SearchResult], query: str):
         if not results:
             return results
 
-        self._ensure_loaded()
+        self.ensure_loaded()
 
         task = (
             "Given a query, retrieve relevant passages that contain the same statement"
         )
 
-        queries = [query for _ in range(len(results))]
-
-        documents = [r.text for r in results]
-
         pairs = [
-            self.format_instruction(task, query, doc)
-            for query, doc in zip(queries, documents)
+            self.format_instruction(task, query, r.text)
+            for r in results
         ]
 
         scores = []
         for start in range(0, len(pairs), self.batch_size):
             inputs = self.process_inputs(pairs[start : start + self.batch_size])
-            try:
-                scores.extend(self.compute_logits(inputs))
-            finally:
-                del inputs
-                self._clear_cuda_cache()
+            scores.extend(self.compute_logits(inputs))
 
         for i, r in enumerate(results):
             # Reranker gives a score between 0 and 1, where higher means more relevant. We can use this to update the rerank_score of each SearchResult.

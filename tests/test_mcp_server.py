@@ -183,7 +183,7 @@ def test_server_shares_vector_store_between_embedding_and_search():
     assert server.embedding_manager.vector_store is server.search_engine.vector_store
 
 
-def test_do_reranking_passes_vram_threshold_and_batch_size_and_releases_device(monkeypatch):
+def test_do_reranking_passes_vram_threshold_and_batch_size_and_keeps_model_warm(monkeypatch):
     config = Config()
     config.RERANKER_GPU_MIN_VRAM_GB = 12.0
     config.RERANKER_BATCH_SIZE = 4
@@ -198,9 +198,6 @@ def test_do_reranking_passes_vram_threshold_and_batch_size_and_releases_device(m
         def rerank(self, results, query):
             calls.append(("rerank", query, len(results)))
             return list(reversed(results))
-
-        def release_device(self):
-            calls.append(("release",))
 
     monkeypatch.setattr("semtero.mcp_server.Reranker", FakeReranker)
 
@@ -223,12 +220,12 @@ def test_do_reranking_passes_vram_threshold_and_batch_size_and_releases_device(m
 
     reranked = server.do_reranking(results, "query")
 
-    assert [item[0] for item in calls] == ["init", "rerank", "release"]
+    assert [item[0] for item in calls] == ["init", "rerank"]
     assert calls[0] == ("init", 12.0, 4)
     assert reranked[0].text == "second"
 
 
-def test_do_reranking_releases_device_when_rerank_fails(monkeypatch):
+def test_do_reranking_propagates_error_from_reranker(monkeypatch):
     config = Config()
     config.RERANKER_BATCH_SIZE = 6
     server = MCPZoteroServer(config)
@@ -243,15 +240,12 @@ def test_do_reranking_releases_device_when_rerank_fails(monkeypatch):
             calls.append(("rerank", query))
             raise RuntimeError("boom")
 
-        def release_device(self):
-            calls.append(("release",))
-
     monkeypatch.setattr("semtero.mcp_server.Reranker", FakeReranker)
 
     with pytest.raises(RuntimeError, match="boom"):
         server.do_reranking([], "query")
 
-    assert [item[0] for item in calls] == ["init", "rerank", "release"]
+    assert [item[0] for item in calls] == ["init", "rerank"]
     assert calls[0] == ("init", config.RERANKER_GPU_MIN_VRAM_GB, 6)
 
 

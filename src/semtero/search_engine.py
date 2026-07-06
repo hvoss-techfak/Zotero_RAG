@@ -15,9 +15,15 @@ logger = logging.getLogger(__name__)
 class SearchEngine:
     """Sentence-focused RAG search."""
 
-    def __init__(self, config: Config, vector_store: VectorStore | None = None):
+    def __init__(
+        self,
+        config: Config,
+        vector_store: VectorStore | None = None,
+        embedding_manager=None,
+    ):
         self.config = config
         self.vector_store = vector_store or VectorStore(str(config.VECTOR_STORE_DIR))
+        self._embedding_manager = embedding_manager
 
         if (
             self.config.EMBEDDING_DIMENSIONS > 0
@@ -68,6 +74,9 @@ class SearchEngine:
         return [float(x) for x in embedding]
 
     def _get_query_embedding(self, query: str) -> List[float]:
+        if self._embedding_manager is not None:
+            result = self._embedding_manager.embed_text_priority([query])
+            return self._validate_query_embedding(result[0])
         client = Client(host=self.config.OLLAMA_BASE_URL)
         response = client.embeddings(
             model=self.config.EMBEDDING_MODEL,

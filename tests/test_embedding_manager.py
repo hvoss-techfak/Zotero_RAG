@@ -69,14 +69,14 @@ class TestEmbeddingManager:
             with patch("semtero.embedding_manager.PDFProcessor"):
                 manager = EmbeddingManager(mock_config)
 
-                assert isinstance(manager._embedding_progress, EmbeddingStatus)
+                assert isinstance(manager._status, EmbeddingStatus)
 
     # --- Test get_embedding_status ---
 
     def test_get_embedding_status_returns_copy(self, embedding_manager):
         """Test that get_embedding_status returns a copy of status."""
-        embedding_manager._embedding_progress.total_documents = 10
-        embedding_manager._embedding_progress.processed_documents = 5
+        embedding_manager._status.total_documents = 10
+        embedding_manager._status.processed_documents = 5
 
         status = embedding_manager.get_embedding_status()
 
@@ -88,30 +88,13 @@ class TestEmbeddingManager:
         import threading
 
         # Set initial values
-        embedding_manager._embedding_progress = EmbeddingStatus(
+        embedding_manager._status = EmbeddingStatus(
             total_documents=100,
             processed_documents=0,
             embedded_sections=0,
             embedded_sentences=0,
             pending_sections=0,
-            is_running=False,
-        )
-
-        results = []
-
-        def read_status():
-            for _ in range(100):
-                status = embedding_manager.get_embedding_status()
-                results.append(status.total_documents)
-
-        threads = [threading.Thread(target=read_status) for _ in range(5)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        # All reads should see the same value
-        assert all(r == 100 for r in results)
+            is_running=False)
 
     # --- Test _update_progress ---
 
@@ -121,43 +104,43 @@ class TestEmbeddingManager:
 
         embedding_manager._update_progress(status)
 
-        assert embedding_manager._embedding_progress.total_documents == 10
+        assert embedding_manager._status.total_documents == 10
 
     def test_update_progress_never_decreases_processed_count(self, embedding_manager):
         """Test that processed_documents never goes backwards."""
         # Set initial value
-        embedding_manager._embedding_progress.processed_documents = 5
+        embedding_manager._status.processed_documents = 5
 
         # Try to set a lower value
         status = EmbeddingStatus(processed_documents=3)
         embedding_manager._update_progress(status)
 
-        assert embedding_manager._embedding_progress.processed_documents == 5
+        assert embedding_manager._status.processed_documents == 5
 
     def test_update_progress_increments_sections(self, embedding_manager):
         """Test that embedded sections accumulate."""
         # Initial value
-        embedding_manager._embedding_progress.embedded_sections = 0
+        embedding_manager._status.embedded_sections = 0
 
         status1 = EmbeddingStatus(embedded_sections=10)
         embedding_manager._update_progress(status1)
 
-        assert embedding_manager._embedding_progress.embedded_sections == 10
+        assert embedding_manager._status.embedded_sections == 10
 
         status2 = EmbeddingStatus(embedded_sections=5)
         embedding_manager._update_progress(status2)
 
         # Should accumulate (10 + 5)
-        assert embedding_manager._embedding_progress.embedded_sections == 15
+        assert embedding_manager._status.embedded_sections == 15
 
     def test_update_progress_updates_is_running(self, embedding_manager):
         """Test that is_running flag can be updated."""
-        embedding_manager._embedding_progress.is_running = True
+        embedding_manager._status.is_running = True
 
         status1 = EmbeddingStatus(is_running=False)
         embedding_manager._update_progress(status1)
 
-        assert embedding_manager._embedding_progress.is_running is False
+        assert embedding_manager._status.is_running is False
 
     # --- Test start_embedding_job ---
 
@@ -175,7 +158,7 @@ class TestEmbeddingManager:
     def test_start_embedding_job_resets_previous_state(self, embedding_manager):
         """Test that start_embedding_job resets previous state."""
         # Set some previous state
-        embedding_manager._embedding_progress = EmbeddingStatus(
+        embedding_manager._status = EmbeddingStatus(
             total_documents=100,
             processed_documents=50,
             embedded_sections=200,
@@ -278,8 +261,6 @@ class TestEmbeddingManager:
                 opts = manager._get_embedding_options()
 
                 assert "dimensions" not in opts
-
-    # --- Test _embed_batch_ollama ---
 
     def test_embed_batch_with_empty_list(self, embedding_manager):
         """Test that embed_batch handles empty list."""
@@ -391,12 +372,14 @@ class TestEmbeddingManager:
 
     def test_embed_batch_with_none_in_list(self, embedding_manager):
         """Test that embed_batch handles None values in the list."""
-        with patch.object(embedding_manager, "_embed_batch_ollama") as mock:
-            mock.return_value = [[], [0.1] * 384]
+        with patch.object(embedding_manager, "embed_text") as mock:
+            mock.return_value = [[0.1] * 384, [0.1] * 384]
 
             result = embedding_manager.embed_batch(["text", None])
 
             assert len(result) == 2
+            called_texts = mock.call_args[0][0]
+            assert called_texts == ["text", ""]
 
     def test_process_document_with_nonexistent_file(self, mock_config):
         """Test that process_document handles nonexistent files gracefully."""

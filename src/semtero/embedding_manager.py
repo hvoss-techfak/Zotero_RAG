@@ -2,7 +2,6 @@
 
 import logging
 import os
-import random
 import sys
 import tempfile
 import threading
@@ -12,9 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Callable
 
-import ollama
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from semtero.config import Config
 from semtero.models import Document, Sentence, EmbeddingStatus
@@ -39,28 +36,31 @@ class EmbeddingManager:
         self._executor: Optional[ThreadPoolExecutor] = None
         self.zotero_client = zotero_client
 
-        self._embedding_progress: EmbeddingStatus = EmbeddingStatus()
-        self._progress_lock = threading.Lock()
+        self._status = EmbeddingStatus()
+        self._lock = threading.Lock()
+        self._ollama_lock = threading.Lock()
+        self._ollama_paused = threading.Event()
 
     @staticmethod
-    def _utc_now_iso() -> str:
+    def _now() -> str:
         return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
-    def _status_copy_locked(self) -> EmbeddingStatus:
+    def _snapshot(self) -> EmbeddingStatus:
+        s = self._status
         return EmbeddingStatus(
-            total_documents=self._embedding_progress.total_documents,
-            processed_documents=self._embedding_progress.processed_documents,
-            embedded_sections=self._embedding_progress.embedded_sections,
-            embedded_sentences=self._embedding_progress.embedded_sentences,
-            pending_sections=self._embedding_progress.pending_sections,
-            is_running=self._embedding_progress.is_running,
-            failed_documents=self._embedding_progress.failed_documents,
-            started_at=self._embedding_progress.started_at,
-            finished_at=self._embedding_progress.finished_at,
-            last_error=self._embedding_progress.last_error,
+            total_documents=s.total_documents,
+            processed_documents=s.processed_documents,
+            embedded_sections=s.embedded_sections,
+            embedded_sentences=s.embedded_sentences,
+            pending_sections=s.pending_sections,
+            is_running=s.is_running,
+            failed_documents=s.failed_documents,
+            started_at=s.started_at,
+            finished_at=s.finished_at,
+            last_error=s.last_error,
         )
 
-    def _has_processed_document_record(self, document_key: str) -> bool:
+    def _has_record(self, document_key: str) -> bool:
         if not document_key:
             return False
         try:
@@ -69,7 +69,7 @@ class EmbeddingManager:
             return False
         return document_key in embedded
 
-    def _mark_zero_sentence_document_processed(
+    def _mark_zero_and_notify(
         self,
         doc_key: str,
         title: str,
@@ -77,7 +77,7 @@ class EmbeddingManager:
     ) -> EmbeddingStatus:
         self.vector_store.update_embedded_document(doc_key, 0)
         logger.info(
-            "[Embedding] No extractable sentences found for %s (%s); marking as processed.",
+            "[Embedding] No extractable sentences for %s (%s); marking as processed.",
             (title or "")[:60],
             doc_key,
         )
@@ -87,36 +87,49 @@ class EmbeddingManager:
         return snapshot
 
     def get_embedding_status(self) -> EmbeddingStatus:
-        with self._progress_lock:
-            return self._status_copy_locked()
+        with self._lock:
+            return self._snapshot()
+
+    # --- Progress tracking (shared between sync & remote embedding paths) ---
 
     def _update_progress(self, status: EmbeddingStatus):
-        with self._progress_lock:
+        with self._lock:
+            p = self._status
             if status.total_documents > 0:
-                self._embedding_progress.total_documents = status.total_documents
-
+                p.total_documents = status.total_documents
             if status.processed_documents > 0:
-                self._embedding_progress.processed_documents = max(
-                    self._embedding_progress.processed_documents,
-                    status.processed_documents,
-                )
-
-            self._embedding_progress.embedded_sections += max(
-                0, status.embedded_sections
-            )
-            self._embedding_progress.embedded_sentences += max(
-                0, status.embedded_sentences
-            )
-            self._embedding_progress.pending_sections = max(0, status.pending_sections)
-            self._embedding_progress.failed_documents += max(0, status.failed_documents)
-            self._embedding_progress.is_running = status.is_running
-
+                p.processed_documents = max(p.processed_documents, status.processed_documents)
+            p.embedded_sections += max(0, status.embedded_sections)
+            p.embedded_sentences += max(0, status.embedded_sentences)
+            p.pending_sections = max(0, status.pending_sections)
+            p.failed_documents += max(0, status.failed_documents)
+            p.is_running = status.is_running
             if status.started_at:
-                self._embedding_progress.started_at = status.started_at
+                p.started_at = status.started_at
             if status.finished_at:
-                self._embedding_progress.finished_at = status.finished_at
+                p.finished_at = status.finished_at
             if status.last_error:
-                self._embedding_progress.last_error = status.last_error
+                p.last_error = status.last_error
+
+    def _update(
+        self,
+        *,
+        processed: int = 0,
+        sections: int = 0,
+        sentences: int = 0,
+        failed: bool = False,
+        error: str = "",
+    ) -> EmbeddingStatus:
+        with self._lock:
+            self._status.processed_documents += processed
+            self._status.embedded_sections += max(0, sections)
+            self._status.embedded_sentences += max(0, sentences)
+            self._status.is_running = True
+            if failed:
+                self._status.failed_documents += 1
+            if error:
+                self._status.last_error = error
+            return self._snapshot()
 
     def mark_document_completed(
         self,
@@ -126,22 +139,17 @@ class EmbeddingManager:
         failed: bool = False,
         last_error: str = "",
     ) -> EmbeddingStatus:
-        with self._progress_lock:
-            self._embedding_progress.processed_documents += 1
-            self._embedding_progress.embedded_sections += max(0, embedded_sections)
-            self._embedding_progress.embedded_sentences += max(0, embedded_sentences)
-            self._embedding_progress.is_running = True
-            if failed:
-                self._embedding_progress.failed_documents += 1
-            if last_error:
-                self._embedding_progress.last_error = last_error
-            return self._status_copy_locked()
+        return self._update(
+            processed=1,
+            sections=embedded_sections,
+            sentences=embedded_sentences,
+            failed=failed,
+            error=last_error,
+        )
 
     def mark_embedding_scan_started(self) -> EmbeddingStatus:
-        """Mark a background embedding scan as running before pending docs are fully known."""
-
-        with self._progress_lock:
-            self._embedding_progress = EmbeddingStatus(
+        with self._lock:
+            self._status = EmbeddingStatus(
                 total_documents=0,
                 processed_documents=0,
                 embedded_sections=0,
@@ -149,45 +157,41 @@ class EmbeddingManager:
                 pending_sections=0,
                 is_running=True,
                 failed_documents=0,
-                started_at=self._utc_now_iso(),
+                started_at=self._now(),
                 finished_at="",
                 last_error="",
             )
-            return self._status_copy_locked()
+            return self._snapshot()
 
     def set_embedding_job_total(self, total_documents: int) -> EmbeddingStatus:
-        """Increase the discovered document total for the active embedding job."""
-
-        with self._progress_lock:
-            next_total = max(
+        with self._lock:
+            self._status.total_documents = max(
                 int(total_documents),
-                self._embedding_progress.processed_documents,
-                self._embedding_progress.total_documents,
+                self._status.processed_documents,
+                self._status.total_documents,
             )
-            self._embedding_progress.total_documents = max(0, next_total)
-            self._embedding_progress.is_running = True
-            if not self._embedding_progress.started_at:
-                self._embedding_progress.started_at = self._utc_now_iso()
-            self._embedding_progress.finished_at = ""
-            return self._status_copy_locked()
+            self._status.is_running = True
+            if not self._status.started_at:
+                self._status.started_at = self._now()
+            self._status.finished_at = ""
+            return self._snapshot()
 
-    def start_embedding_job(self, total_documents: int):
+    def start_embedding_job(self, total_documents: int) -> EmbeddingStatus:
         snapshot = self.mark_embedding_scan_started()
         if total_documents > 0:
             snapshot = self.set_embedding_job_total(total_documents)
         logger.info(
-            "[EmbeddingManager] Started embedding job for %s documents",
-            total_documents,
+            "[EmbeddingManager] Started embedding job for %s documents", total_documents
         )
         return snapshot
 
     def finish_embedding_job(self, *, last_error: str = "") -> EmbeddingStatus:
-        with self._progress_lock:
-            self._embedding_progress.is_running = False
-            self._embedding_progress.finished_at = self._utc_now_iso()
+        with self._lock:
+            self._status.is_running = False
+            self._status.finished_at = self._now()
             if last_error:
-                self._embedding_progress.last_error = last_error
-            return self._status_copy_locked()
+                self._status.last_error = last_error
+            return self._snapshot()
 
     @property
     def executor(self) -> ThreadPoolExecutor:
@@ -204,7 +208,16 @@ class EmbeddingManager:
             self._executor = ThreadPoolExecutor(max_workers=max_workers)
         return self._executor
 
+    def pause_ollama(self) -> None:
+        """Pause background Ollama embedding calls so a search can jump ahead."""
+        self._ollama_paused.set()
+
+    def resume_ollama(self) -> None:
+        """Resume background Ollama embedding calls after a search finishes."""
+        self._ollama_paused.clear()
+
     def shutdown(self):
+        self.resume_ollama()
         if self._executor:
             logger.info("[EmbeddingManager] Shutting down ThreadPoolExecutor")
             self._executor.shutdown(wait=True)
@@ -229,7 +242,7 @@ class EmbeddingManager:
         self, embeddings: List[List[float]], *, context: str = "embedding request"
     ) -> List[List[float]]:
         if not embeddings:
-            return []
+            raise ValueError(f"{context} returned empty embeddings")
 
         dims = sorted({len(emb or []) for emb in embeddings})
         if not dims or dims == [0]:
@@ -258,21 +271,7 @@ class EmbeddingManager:
 
         return [[float(x) for x in emb] for emb in embeddings]
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
-    def _embed_text(self, texts: List[str]) -> List[List[float]]:
-        logger.debug(f"Embedding single text (batch size 1): {texts[0][:60]}...")
-        response = ollama.embeddings(
-            model=self.config.EMBEDDING_MODEL,
-            prompt=texts[0],
-            options=self._get_embedding_options(),
-        )
-        return self._validate_embeddings(
-            [response["embedding"]], context="single embedding request"
-        )
-
-    def embed_text(self, text_list: List[str]) -> List[List[float]]:
-        # we need to request manually
-        # convert list to the format expected by ollama json encoding of list string
+    def _ollama_embed(self, text_list: List[str]) -> List[List[float]]:
         response = requests.post(
             url=f"{self.config.OLLAMA_BASE_URL}/api/embed",
             json={
@@ -286,7 +285,6 @@ class EmbeddingManager:
                 f"Embedding request failed with status {response.status_code}: {response.text}"
             )
 
-        # to json
         response = response.json()
         embeddings = response.get("embeddings")
         if (
@@ -298,7 +296,17 @@ class EmbeddingManager:
 
         return self._validate_embeddings(embeddings, context="batch embedding request")
 
-    def _embed_batch_ollama(self, texts: List[str]) -> List[List[float]]:
+    def embed_text(self, text_list: List[str]) -> List[List[float]]:
+        while self._ollama_paused.is_set():
+            time.sleep(0.05)
+        with self._ollama_lock:
+            return self._ollama_embed(text_list)
+
+    def embed_text_priority(self, text_list: List[str]) -> List[List[float]]:
+        with self._ollama_lock:
+            return self._ollama_embed(text_list)
+
+    def embed_batch(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
 
@@ -312,13 +320,6 @@ class EmbeddingManager:
                 normalized.append(str(t))
 
         batch_size = getattr(self.config, "BATCH_EMBEDDING_SIZE", 32)
-        logger.info(
-            f"Embedding batch of {len(normalized)} texts with batch size {batch_size} and embedding dimensions {self.config.EMBEDDING_DIMENSIONS}"
-        )
-        logger.debug(
-            "Sample text for embedding: %s",
-            random.choice(normalized) + "..." if normalized else "No texts",
-        )
         all_embeddings: List[List[float]] = []
 
         for i in range(0, len(normalized), batch_size):
@@ -327,23 +328,31 @@ class EmbeddingManager:
 
         return all_embeddings
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        if not texts:
-            return []
-        return self._embed_batch_ollama(texts)
-
     # --- Sentence extraction ---
 
-    def process_document(
-        self,
-        document: Document,
-        pdf_path: str,
-    ) -> List[Sentence]:
+    def process_document(self, document: Document, pdf_path: str) -> List[Sentence]:
         return self.pdf_processor.extract_sentences(
             pdf_path, document_id=document.zotero_key
         )
 
     # --- Background operations ---
+
+    def _embed_and_store(
+        self, document: Document, pdf_path: str
+    ) -> list[Sentence] | None:
+        """Extract sentences, embed, and store. Returns sentences on success, None if empty."""
+        sentences = self.process_document(document, pdf_path)
+        if not sentences:
+            return None
+
+        sent_embeddings = self.embed_batch([s.text for s in sentences])
+        self.vector_store.add_sentences(
+            sentences, sent_embeddings, document_key=document.zotero_key
+        )
+        self.vector_store.update_embedded_document(
+            document.zotero_key, len(sentences)
+        )
+        return sentences
 
     def embed_document_async(
         self,
@@ -361,42 +370,35 @@ class EmbeddingManager:
         zotero_client,
         callback: Optional[Callable[[EmbeddingStatus], None]] = None,
     ) -> Future:
+        key = document.zotero_key
         try:
-            # Prefer DB-backed check: if any sentence vectors exist, it's embedded.
-            if self.vector_store.is_document_embedded(document.zotero_key):
+            if self.vector_store.is_document_embedded(key):
                 logger.info(
                     "[Embedding] Skipping already-embedded document %s (%s)",
                     (document.title or "")[:60],
-                    document.zotero_key,
+                    key,
                 )
-
                 snapshot = self.mark_document_completed()
                 if callback:
                     callback(snapshot)
-
                 f: Future = Future()
                 f.set_result(None)
                 return f
 
-            # Fall back to metadata file check (kept for compatibility, including zero-sentence PDFs).
-            if self._has_processed_document_record(document.zotero_key):
+            if self._has_record(key):
                 logger.info(
                     "[Embedding] Skipping already-processed document %s (%s)",
                     (document.title or "")[:60],
-                    document.zotero_key,
+                    key,
                 )
-
                 snapshot = self.mark_document_completed()
                 if callback:
                     callback(snapshot)
-
                 f: Future = Future()
                 f.set_result(None)
                 return f
         except Exception as e:
-            logger.debug(
-                "[Embedding] Skip-check failed for %s: %s", document.zotero_key, e
-            )
+            logger.debug("[Embedding] Skip-check failed for %s: %s", key, e)
 
         return self.executor.submit(
             self._embed_document_from_zotero_task, document, zotero_client, callback
@@ -433,11 +435,7 @@ class EmbeddingManager:
 
             sentences = self.process_document(document, str(temp_path))
             if not sentences:
-                self._mark_zero_sentence_document_processed(
-                    doc_key,
-                    document.title,
-                    callback,
-                )
+                self._mark_zero_and_notify(doc_key, document.title, callback)
                 return
 
             sent_embeddings = self.embed_batch([s.text for s in sentences])
@@ -499,20 +497,10 @@ class EmbeddingManager:
             if callback:
                 callback(EmbeddingStatus(is_running=True, pending_sections=1))
 
-            sentences = self.process_document(document, pdf_path)
-            if not sentences:
-                self._mark_zero_sentence_document_processed(
-                    doc_key,
-                    document.title,
-                    callback,
-                )
+            sentences = self._embed_and_store(document, pdf_path)
+            if sentences is None:
+                self._mark_zero_and_notify(doc_key, document.title, callback)
                 return
-
-            sent_embeddings = self.embed_batch([s.text for s in sentences])
-            self.vector_store.add_sentences(
-                sentences, sent_embeddings, document_key=doc_key
-            )
-            self.vector_store.update_embedded_document(doc_key, len(sentences))
 
             snapshot = self.mark_document_completed(embedded_sentences=len(sentences))
             if callback:
@@ -540,10 +528,6 @@ class EmbeddingManager:
     def get_pdf_documents_from_directory(
         cls, pdf_dir: Path
     ) -> List[tuple[Document, str]]:
-        """Scan a directory for PDF files and create Document objects.
-
-        This helper is used by tests and the optional CLI.
-        """
         documents: list[tuple[Document, str]] = []
         if not pdf_dir.exists():
             return documents
@@ -560,10 +544,6 @@ class EmbeddingManager:
         return documents
 
     def calculate_relevance_score(self, embedding: List[float]) -> float:
-        """Calculate relevance score from embedding vector.
-
-        Kept as a small utility used by tests and optional reranking approaches.
-        """
         if not embedding:
             return 0.0
 
@@ -604,14 +584,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # Ensure directories exist
     Config.ensure_dirs()
 
-    # Initialize embedding manager
     config = Config()
     manager = EmbeddingManager(config)
 
-    # Get documents from PDF directory
     pdf_dir = Path(args.pdf_dir)
     documents = manager.get_pdf_documents_from_directory(pdf_dir)
 
@@ -619,11 +596,10 @@ if __name__ == "__main__":
         print(f"No PDFs found in {pdf_dir}")
         sys.exit(1)
 
-    # Filter to unembedded docs
     pending = [
         (doc, path)
         for doc, path in documents
-        if not manager._has_processed_document_record(doc.zotero_key)
+        if not manager._has_record(doc.zotero_key)
     ]
 
     print(f"Total PDFs: {len(documents)}, Pending: {len(pending)}")

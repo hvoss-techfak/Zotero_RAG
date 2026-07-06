@@ -36,15 +36,33 @@ class MCPZoteroServer:
         self.search_engine = SearchEngine(
             config,
             vector_store=shared_vector_store,
+            embedding_manager=self.embedding_manager,
         )
         # Cache for document metadata to avoid repeated API calls
         self._metadata_cache: dict[str, dict] = {}
+        # Warm Reranker singleton (lazily initialized on first search)
+        self._reranker: Reranker | None = None
         self._auto_embed_done = False
         self._embedding_lock = threading.Lock()
         self._embedding_thread: threading.Thread | None = None
         self._status_listeners: list[Callable[[object], None]] = []
         self._last_run_summary: str = "Idle"
         self._next_auto_reembed_at: str = ""
+
+    def warmup_reranker(self) -> None:
+        """Pre-load the reranker model at startup instead of on first search."""
+        if self.config.DISABLE_RERANKER:
+            return
+        if self._reranker is not None:
+            return
+        logger.info("Warming up reranker model (%s)...", self.config.RERANKER_MODEL)
+        self._reranker = Reranker(
+            model_name=self.config.RERANKER_MODEL,
+            min_gpu_vram_gb=self.config.RERANKER_GPU_MIN_VRAM_GB,
+            batch_size=self.config.RERANKER_BATCH_SIZE,
+        )
+        self._reranker.ensure_loaded()
+        logger.info("Reranker model loaded and ready")
 
     def register_embedding_status_listener(
         self, listener: Callable[[object], None]
@@ -282,15 +300,17 @@ class MCPZoteroServer:
     ) -> list[SearchResult]:
         """Optional second-stage reranking of search results."""
 
-        rer = Reranker(
-            model_name=self.config.RERANKER_MODEL,
-            min_gpu_vram_gb=self.config.RERANKER_GPU_MIN_VRAM_GB,
-            batch_size=self.config.RERANKER_BATCH_SIZE,
-        )
-        try:
-            return rer.rerank(results, query)
-        finally:
-            rer.release_device()
+        if self.config.DISABLE_RERANKER:
+            return results
+
+        if self._reranker is None:
+            self._reranker = Reranker(
+                model_name=self.config.RERANKER_MODEL,
+                min_gpu_vram_gb=self.config.RERANKER_GPU_MIN_VRAM_GB,
+                batch_size=self.config.RERANKER_BATCH_SIZE,
+            )
+
+        return self._reranker.rerank(results, query)
 
     async def search_documents(
         self,
@@ -344,13 +364,17 @@ class MCPZoteroServer:
             }
         )
 
-        results = self.search_engine.search_best_sentences(
-            query=query,
-            document_key=document_key,
-            top_sentences=temp_top_sentences,
-            citation_return_mode=citation_return_mode,
-            progress_callback=emit_progress,
-        )
+        self.embedding_manager.pause_ollama()
+        try:
+            results = self.search_engine.search_best_sentences(
+                query=query,
+                document_key=document_key,
+                top_sentences=temp_top_sentences,
+                citation_return_mode=citation_return_mode,
+                progress_callback=emit_progress,
+            )
+        finally:
+            self.embedding_manager.resume_ollama()
 
         logger.debug(f"Initial search returned {len(results)} results before filtering")
 
@@ -385,15 +409,26 @@ class MCPZoteroServer:
             )
             return []
 
-        emit_progress(
-            {
-                "stage": "reranking",
-                "percentage": 60,
-                "message": "Performing reranking",
-                "detail": f"Reranking {len(ret)} candidate sentence{'s' if len(ret) != 1 else ''}",
-                "candidate_sentences": len(ret),
-            }
-        )
+        if self.config.DISABLE_RERANKER:
+            emit_progress(
+                {
+                    "stage": "reranking",
+                    "percentage": 60,
+                    "message": "Reranking disabled",
+                    "detail": "Skipping reranking stage (DISABLE_RERANKER=true)",
+                    "candidate_sentences": len(ret),
+                }
+            )
+        else:
+            emit_progress(
+                {
+                    "stage": "reranking",
+                    "percentage": 60,
+                    "message": "Performing reranking",
+                    "detail": f"Reranking {len(ret)} candidate sentence{'s' if len(ret) != 1 else ''}",
+                    "candidate_sentences": len(ret),
+                }
+            )
 
         # Do reranking
         results = self.do_reranking(ret, query)
@@ -840,6 +875,7 @@ def main() -> None:
     config = Config()
     server = MCPZoteroServer(config)
     set_server_instance(server)
+    server.warmup_reranker()
 
     logger.info("FastMCP server starting with stdio transport...")
 

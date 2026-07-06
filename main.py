@@ -59,6 +59,7 @@ class SemTeroApplication:
             self.server.register_embedding_status_listener(
                 self._handle_embedding_status
             )
+            self.server.warmup_reranker()
             logger.info("All services initialized successfully")
             return True
         except Exception as exc:

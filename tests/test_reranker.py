@@ -70,7 +70,7 @@ def test_rerank_skips_loading_model_for_empty_results(monkeypatch):
 def test_rerank_processes_inputs_in_configured_batches(monkeypatch):
     reranker = Reranker(batch_size=2)
 
-    monkeypatch.setattr(reranker, "_ensure_loaded", lambda: None)
+    monkeypatch.setattr(reranker, "ensure_loaded", lambda: None)
 
     batch_pairs = []
 
