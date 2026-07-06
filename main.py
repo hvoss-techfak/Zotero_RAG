@@ -221,7 +221,8 @@ class SemTeroApplication:
             logger.error("Ollama connection required for embeddings")
             sys.exit(1)
 
-        self.start_background_embedding(trigger="startup")
+        if self.config.AUTO_START_EMBEDDING:
+            self.start_background_embedding(trigger="startup")
         self._start_auto_reembed_scheduler()
         if enable_webui:
             self._start_webui(port=webui_port)
@@ -408,7 +409,8 @@ def main() -> None:
             logger.error("Ollama connection required for embeddings")
             sys.exit(1)
 
-        app.start_background_embedding(trigger="startup")
+        if app.config.AUTO_START_EMBEDDING:
+            app.start_background_embedding(trigger="startup")
         app._start_auto_reembed_scheduler()
         if not args.no_webui:
             app._start_webui(host=args.webui_host, port=args.webui_port)

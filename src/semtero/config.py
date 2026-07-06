@@ -122,6 +122,9 @@ class Config:
         self.AUTO_EMBED_SENTENCES: bool = (
             os.getenv("AUTO_EMBED_SENTENCES", "false").lower() == "true"
         )
+        self.AUTO_START_EMBEDDING: bool = (
+            os.getenv("AUTO_START_EMBEDDING", "true").lower() == "true"
+        )
         self.AUTO_REEMBED_INTERVAL_MINUTES: int = max(
             0, _get_int("AUTO_REEMBED_INTERVAL_MINUTES", 15)
         )

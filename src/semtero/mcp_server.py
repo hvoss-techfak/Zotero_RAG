@@ -254,6 +254,11 @@ class MCPZoteroServer:
         if self._auto_embed_done:
             return
 
+        if not self.config.AUTO_START_EMBEDDING:
+            logger.info("Auto-start embedding disabled via AUTO_START_EMBEDDING=false")
+            self._auto_embed_done = True
+            return
+
         try:
             result = self.start_background_embedding(trigger="startup")
             if result.get("status") == "already_running":
